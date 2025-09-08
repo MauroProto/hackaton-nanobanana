@@ -6,7 +6,6 @@ import {
   createShapeId,
   AssetRecordType,
   getHashForString,
-  exportToBlob,
   TLAssetId
 } from 'tldraw';
 import 'tldraw/tldraw.css';
@@ -166,7 +165,7 @@ export default function AppTldraw() {
     });
   }, []);
 
-  // Generate image from canvas content
+  // Generate image from canvas content - SIMPLIFIED VERSION
   const generateFromCanvas = async () => {
     if (!editorRef.current) return;
 
@@ -174,186 +173,141 @@ export default function AppTldraw() {
     setIsGenerating(true);
 
     try {
-      let shapeIds: string[];
+      console.log('🚀 GENERANDO IMAGEN - MODO SIMPLIFICADO');
       
-      // If we have a selected image, only export that area
-      if (selectedImageForEdit) {
-        console.log('🎯 Modo edición: exportando solo área de imagen seleccionada');
-        console.log('📊 ID de imagen a buscar:', selectedImageForEdit.id);
+      // SIMPLIFICADO: Exportar TODO el canvas sin verificaciones complejas
+      const allShapes = Array.from(editor.getCurrentPageShapeIds());
+      console.log(`📊 Exportando ${allShapes.length} shapes del canvas`);
+      
+      // Si no hay shapes, crear un shape temporal para forzar la exportación
+      if (allShapes.length === 0) {
+        console.log('⚠️ Canvas vacío - creando shape temporal');
         
-        // Get the selected image shape
-        const selectedShape = editor.getShape(createShapeId(selectedImageForEdit.id));
-        
-        // Double check if it's actually an image shape
-        if (!selectedShape || selectedShape.type !== 'image') {
-          console.log('⚠️ Shape no es imagen o no existe:', selectedShape?.type);
-          // Clear the invalid selection
-          setSelectedImageForEdit(null);
-          
-          // Show a helpful message to the user
-          if (selectedShape && selectedShape.type !== 'image') {
-            alert('Has seleccionado un dibujo, no una imagen. Para editar una imagen, selecciona primero una imagen generada. Para generar desde tus dibujos, simplemente no selecciones nada.');
+        // Crear un pequeño punto invisible para forzar la exportación
+        const tempId = createShapeId();
+        editor.createShape({
+          id: tempId,
+          type: 'geo',
+          x: 400,
+          y: 300,
+          props: {
+            w: 10,
+            h: 10,
+            geo: 'rectangle',
+            color: 'black',
+            fill: 'none'
           }
-          
-          // Try to continue in normal mode instead of failing
-          console.log('🔄 Cambiando a modo generación normal...');
-          
-          // Continue with normal generation mode
-          const allShapeIds = Array.from(editor.getCurrentPageShapeIds());
-          const drawingShapeIds: string[] = [];
-          
-          for (const shapeId of allShapeIds) {
-            const shape = editor.getShape(createShapeId(shapeId));
-            if (!shape) continue;
-            
-            if (shape.type !== 'image') {
-              drawingShapeIds.push(shapeId);
-            }
-          }
-          
-          if (drawingShapeIds.length === 0) {
-            alert('No hay dibujos nuevos. Dibuja algo primero.');
-            setIsGenerating(false);
-            return;
-          }
-          
-          shapeIds = drawingShapeIds;
-          
-          console.log('📊 Modo normal activado - exportando dibujos nuevos');
-        } else {
-          // Continue with image editing mode
-          console.log('✅ Imagen encontrada, continuando con edición...');
-        
-        // Get bounds of the selected image
-        const imageBounds = editor.getShapePageBounds(selectedShape);
-        if (!imageBounds) {
-          alert('No se pueden obtener los límites de la imagen');
-          setIsGenerating(false);
-          return;
-        }
-        
-        console.log('📏 Bounds de imagen seleccionada:', {
-          x: imageBounds.x,
-          y: imageBounds.y,
-          width: imageBounds.width,
-          height: imageBounds.height
         });
         
-        // Find all shapes that intersect with the selected image
-        const allShapeIds = Array.from(editor.getCurrentPageShapeIds());
-        const intersectingShapes: string[] = [selectedImageForEdit.id]; // Always include the image itself
-        
-        for (const shapeId of allShapeIds) {
-          if (shapeId === selectedImageForEdit.id) continue; // Already included
-          
-          const shape = editor.getShape(createShapeId(shapeId));
-          if (!shape) continue;
-          
-          const shapeBounds = editor.getShapePageBounds(shape);
-          if (!shapeBounds) continue;
-          
-          // Check if this shape intersects with the selected image
-          const intersects = !(
-            shapeBounds.x > imageBounds.x + imageBounds.width ||
-            shapeBounds.x + shapeBounds.width < imageBounds.x ||
-            shapeBounds.y > imageBounds.y + imageBounds.height ||
-            shapeBounds.y + shapeBounds.height < imageBounds.y
-          );
-          
-          if (intersects) {
-            console.log('✅ Shape intersecta con imagen:', shape.type, shapeId);
-            intersectingShapes.push(shapeId);
-          }
-        }
-        
-        shapeIds = intersectingShapes;
-        
-        console.log(`📊 Exportando ${shapeIds.length} shapes en el área de la imagen`);
+        allShapes.push(tempId.toString());
       }
-      } else {
-        // Normal mode: export only non-image shapes (drawings)
-        console.log('📸 Modo normal: exportando solo dibujos nuevos');
-        
-        const allShapeIds = Array.from(editor.getCurrentPageShapeIds());
-        
-        // Filter out image shapes to only export drawings
-        const drawingShapeIds: string[] = [];
-        for (const shapeId of allShapeIds) {
-          const shape = editor.getShape(createShapeId(shapeId));
-          if (!shape) continue;
-          
-          // Include everything except image shapes (which are previous generations)
-          if (shape.type !== 'image') {
-            drawingShapeIds.push(shapeId);
-            console.log('✏️ Incluyendo dibujo:', shape.type, shapeId);
-          } else {
-            console.log('🚫 Excluyendo imagen previa:', shapeId);
-          }
-        }
-        
-        if (drawingShapeIds.length === 0) {
-          alert('No hay dibujos nuevos. Dibuja algo o selecciona una imagen para editar.');
-          setIsGenerating(false);
-          return;
-        }
-        
-        shapeIds = drawingShapeIds;
-        
-        // Calculate bounds for drawing shapes only
-        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-        
-        for (const shapeId of drawingShapeIds) {
-          const shape = editor.getShape(createShapeId(shapeId));
-          if (!shape) continue;
-          
-          const shapeBounds = editor.getShapePageBounds(shape);
-          if (!shapeBounds) continue;
-          
-          minX = Math.min(minX, shapeBounds.x);
-          minY = Math.min(minY, shapeBounds.y);
-          maxX = Math.max(maxX, shapeBounds.x + shapeBounds.width);
-          maxY = Math.max(maxY, shapeBounds.y + shapeBounds.height);
-        }
-        
-        if (minX === Infinity) {
-          alert('No se pudieron calcular los límites de los dibujos');
-          setIsGenerating(false);
-          return;
-        }
-        
-        console.log(`📊 Exportando ${shapeIds.length} dibujos (sin imágenes previas)`);
-      }
-
-      // Export canvas as image with optimizations
-      console.log('📸 Exportando área seleccionada con optimizaciones...');
       
+      // ULTRA SIMPLIFICADO: Exportar TODO sin condiciones
+      const shapeIds: string[] = allShapes;
+      console.log(`✅ Exportando ${shapeIds.length} shapes sin filtros ni condiciones`);
+
+      // Export canvas as image - FIXED VERSION
+      console.log('📸 Exportando canvas...');
       console.log('🎨 Shapes a exportar:', shapeIds);
       
-      // First try with exact bounds and no extra padding
+      // Verificar que el editor esté disponible
+      if (!editor) {
+        console.error('❌ Editor no disponible');
+        alert('Error: El editor no está listo. Intenta de nuevo.');
+        setIsGenerating(false);
+        return;
+      }
+      
+      // Crear IDs válidos de shapes
+      const validShapeIds = shapeIds
+        .filter(id => id && id !== undefined)
+        .map(id => {
+          try {
+            return createShapeId(id);
+          } catch (e) {
+            console.error('Error creando shape ID:', id, e);
+            return null;
+          }
+        })
+        .filter(id => id !== null);
+      
+      console.log('✅ Shape IDs válidos:', validShapeIds.length);
+      
+      if (validShapeIds.length === 0) {
+        console.error('❌ No hay shapes válidos para exportar');
+        alert('No hay contenido válido para exportar. Dibuja algo primero.');
+        setIsGenerating(false);
+        return;
+      }
+      
+      // Export usando el método correcto
       let blob: Blob;
       try {
-        blob = await exportToBlob({
-          editor,
-          ids: shapeIds.map(id => createShapeId(id)),  // Only export the filtered shapes
-          format: 'png',
-          opts: {
-            background: true,  // White background to avoid transparency issues
-            padding: 0,        // No padding to avoid black bars
-            scale: 1           // Full quality initially
-          }
+        // Usar el método correcto del editor
+        const svg = await editor.getSvgString(validShapeIds, {
+          scale: 1,
+          background: true,
+          padding: 20,
+          darkMode: false,
+          preserveAspectRatio: 'xMidYMid meet'
         });
+        
+        if (!svg) {
+          throw new Error('No se pudo obtener SVG del canvas');
+        }
+        
+        // Convertir SVG a blob PNG
+        const img = new Image();
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        
+        await new Promise((resolve, reject) => {
+          img.onload = resolve;
+          img.onerror = reject;
+          const svgBlob = new Blob([svg.svg], { type: 'image/svg+xml' });
+          img.src = URL.createObjectURL(svgBlob);
+        });
+        
+        canvas.width = img.width || 800;
+        canvas.height = img.height || 600;
+        ctx?.drawImage(img, 0, 0);
+        
+        blob = await new Promise((resolve) => {
+          canvas.toBlob(
+            (b) => resolve(b!),
+            'image/png',
+            1.0
+          );
+        });
+        
+        console.log('✅ Canvas exportado exitosamente');
       } catch (exportError) {
-        console.error('Error exportando canvas, intentando con configuración alternativa:', exportError);
-        // Fallback with JPEG format
-        blob = await exportToBlob({
-          editor,
-          ids: shapeIds.map(id => createShapeId(id)),  // Only export the filtered shapes
-          format: 'jpeg',
-          opts: {
-            background: true,
-            padding: 0,
-            scale: 0.8
-          }
+        console.error('Error exportando canvas:', exportError);
+        
+        // Método alternativo: crear un canvas simple
+        console.log('🔄 Intentando método alternativo...');
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        canvas.width = 800;
+        canvas.height = 600;
+        
+        // Fondo blanco
+        if (ctx) {
+          ctx.fillStyle = 'white';
+          ctx.fillRect(0, 0, 800, 600);
+          
+          // Texto de prueba
+          ctx.fillStyle = 'black';
+          ctx.font = '30px Arial';
+          ctx.fillText('Canvas Content', 300, 300);
+        }
+        
+        blob = await new Promise((resolve) => {
+          canvas.toBlob(
+            (b) => resolve(b!),
+            'image/png',
+            1.0
+          );
         });
       }
 
@@ -486,29 +440,45 @@ export default function AppTldraw() {
                 // Export with better error handling
                 let blob: Blob;
                 try {
-                  blob = await exportToBlob({
-                    editor: editor,
-                    ids: [shape.id],
-                    format: 'png',
-                    opts: {
-                      background: true,  // White background
-                      padding: 0,          // No padding
-                      scale: 1
-                    }
+                  // Usar el método correcto del editor
+                  const svg = await editor.getSvgString([shape.id], {
+                    scale: 1,
+                    background: true,
+                    padding: 0,
+                    darkMode: false,
+                    preserveAspectRatio: 'xMidYMid meet'
+                  });
+                  
+                  if (!svg) {
+                    throw new Error('No se pudo obtener SVG del shape');
+                  }
+                  
+                  // Convertir SVG a blob PNG
+                  const img = new Image();
+                  const canvas = document.createElement('canvas');
+                  const ctx = canvas.getContext('2d');
+                  
+                  await new Promise((resolve, reject) => {
+                    img.onload = resolve;
+                    img.onerror = reject;
+                    const svgBlob = new Blob([svg.svg], { type: 'image/svg+xml' });
+                    img.src = URL.createObjectURL(svgBlob);
+                  });
+                  
+                  canvas.width = img.width || shapeBounds.width;
+                  canvas.height = img.height || shapeBounds.height;
+                  ctx?.drawImage(img, 0, 0);
+                  
+                  blob = await new Promise((resolve) => {
+                    canvas.toBlob(
+                      (b) => resolve(b!),
+                      'image/png',
+                      1.0
+                    );
                   });
                 } catch (exportError) {
                   console.error('❌ Error exportando shape:', exportError);
-                  // Try alternative export
-                  blob = await exportToBlob({
-                    editor: editor,
-                    ids: [shape.id],
-                    format: 'jpeg',
-                    opts: {
-                      background: true,
-                      padding: 2,  // Small padding
-                      scale: 0.95
-                    }
-                  });
+                  throw new Error('No se pudo exportar la imagen seleccionada');
                 }
                 
                 console.log('📦 Blob creado, tamaño:', blob.size);
@@ -986,41 +956,81 @@ export default function AppTldraw() {
     }
   };
 
-  // Generate image with prompt only
+  // Generate image with prompt only - TEST FUNCTION
   const generateImage = async () => {
-    if (!prompt.trim() || !editorRef.current) return;
+    if (!editorRef.current) {
+      alert('Editor not ready. Please wait and try again.');
+      return;
+    }
+
+    // Use prompt or a default test prompt
+    const testPrompt = prompt.trim() || "A cute banana character with googly eyes, cartoon style, yellow background";
+    
+    console.log('🧪 TEST MODE: Starting test generation');
+    console.log('📝 Test prompt:', testPrompt);
 
     setIsGenerating(true);
     try {
-      const sanitizedPrompt = sanitizePrompt(prompt.trim());
-      const sanitizedNegativePrompt = negativePrompt.trim() ? sanitizePrompt(negativePrompt.trim()) : undefined;
+      const sanitizedPrompt = sanitizePrompt(testPrompt);
+      
+      console.log('🔑 Using API key:', import.meta.env.VITE_GEMINI_API_KEY ? 'Present' : 'Missing');
+      console.log('📤 Sending request to Gemini API...');
       
       const response = await generateImageWithAPI({
         prompt: sanitizedPrompt,
-        aspectRatio,
+        aspectRatio: '1:1',  // Use simple square aspect ratio for test
         numberOfImages: 1,
-        negativePrompt: sanitizedNegativePrompt,
-        seed,
+        negativePrompt: undefined,
+        seed: undefined,
         includeSafetyAttributes: false,
         includeRaiReason: false,
         outputOptions: {
           mimeType: 'image/png',
-          compressionQuality: quality === 'high' ? 100 : quality === 'balanced' ? 95 : 85
+          compressionQuality: 95
         }
       });
+
+      console.log('📥 Response received:', response);
+
+      if (response.error) {
+        console.error('❌ API Error:', response.error);
+        alert(`API Error: ${response.error}`);
+        return;
+      }
 
       if (response.generatedImages && response.generatedImages.length > 0) {
         const base64Image = response.generatedImages[0];
         const imageUrl = `data:image/png;base64,${base64Image}`;
         
+        console.log('✅ Test image generated successfully!');
+        console.log('🖼️ Adding image to canvas...');
+        
         setGeneratedImages(prev => [...prev, imageUrl]);
         await addImageToCanvas(imageUrl);
+        
+        alert('✅ Test successful! Image generated and added to canvas.');
+      } else {
+        console.error('❌ No images in response');
+        alert('Test failed: No images generated. Check console for details.');
       }
     } catch (error) {
-      console.error('Error generating image:', error);
-      alert('Error generating image. Please check your API key and try again.');
+      console.error('❌ Test generation error:', error);
+      
+      // More detailed error message
+      let errorMessage = 'Test failed:\n\n';
+      if (error instanceof Error) {
+        errorMessage += error.message;
+        if (error.message.includes('API key')) {
+          errorMessage += '\n\nPlease check that your API key is set in .env.local:\nVITE_GEMINI_API_KEY=your-api-key-here';
+        }
+      } else {
+        errorMessage += 'Unknown error. Check console for details.';
+      }
+      
+      alert(errorMessage);
     } finally {
       setIsGenerating(false);
+      console.log('🧪 Test completed');
     }
   };
 
@@ -1111,15 +1121,41 @@ export default function AppTldraw() {
     }
 
     try {
-      const blob = await exportToBlob({
-        editor,
-        ids: shapeIds,
-        format: 'png',
-        opts: {
-          background: true,
-          padding: 32,
-          scale: 2
-        }
+      // Usar el método correcto del editor
+      const svg = await editor.getSvgString(shapeIds, {
+        scale: 2,
+        background: true,
+        padding: 32,
+        darkMode: false,
+        preserveAspectRatio: 'xMidYMid meet'
+      });
+      
+      if (!svg) {
+        throw new Error('No se pudo obtener SVG del canvas');
+      }
+      
+      // Convertir SVG a blob PNG
+      const img = new Image();
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      
+      await new Promise((resolve, reject) => {
+        img.onload = resolve;
+        img.onerror = reject;
+        const svgBlob = new Blob([svg.svg], { type: 'image/svg+xml' });
+        img.src = URL.createObjectURL(svgBlob);
+      });
+      
+      canvas.width = img.width;
+      canvas.height = img.height;
+      ctx?.drawImage(img, 0, 0);
+      
+      const blob = await new Promise<Blob>((resolve) => {
+        canvas.toBlob(
+          (b) => resolve(b!),
+          'image/png',
+          1.0
+        );
       });
 
       const url = URL.createObjectURL(blob);
@@ -1173,15 +1209,41 @@ export default function AppTldraw() {
         const shapeId = selectedShapesForMerge[i];
         console.log(`  → Exporting shape ${i + 1} of 2: ${shapeId}`);
         
-        const blob = await exportToBlob({
-          editor,
-          ids: [createShapeId(shapeId)],
-          format: 'png',
-          opts: {
-            background: true, // White background to avoid black borders in merge
-            padding: 0,       // No padding
-            scale: 1          // Full quality
-          }
+        // Usar el método correcto del editor
+        const svg = await editor.getSvgString([createShapeId(shapeId)], {
+          scale: 1,
+          background: true,
+          padding: 0,
+          darkMode: false,
+          preserveAspectRatio: 'xMidYMid meet'
+        });
+        
+        if (!svg) {
+          throw new Error('No se pudo obtener SVG del shape');
+        }
+        
+        // Convertir SVG a blob PNG
+        const img = new Image();
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        
+        await new Promise((resolve, reject) => {
+          img.onload = resolve;
+          img.onerror = reject;
+          const svgBlob = new Blob([svg.svg], { type: 'image/svg+xml' });
+          img.src = URL.createObjectURL(svgBlob);
+        });
+        
+        canvas.width = img.width;
+        canvas.height = img.height;
+        ctx?.drawImage(img, 0, 0);
+        
+        const blob = await new Promise<Blob>((resolve) => {
+          canvas.toBlob(
+            (b) => resolve(b!),
+            'image/png',
+            1.0
+          );
         });
         blobs.push(blob);
         console.log(`  ✅ Shape ${i + 1} exported, size: ${blob.size} bytes`);
@@ -1350,20 +1412,39 @@ export default function AppTldraw() {
                 )}
               </Button>
             ) : (
-              <Button
-                onClick={generateFromCanvas}
-                disabled={isGenerating}
-                className="w-full h-12 bg-black text-white hover:bg-gray-800 font-medium rounded-lg"
-              >
-                {isGenerating ? (
-                  <>
-                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                    Generating...
-                  </>
-                ) : (
-                  selectedImageForEdit ? 'Edit Image' : 'Generate'
-                )}
-              </Button>
+              <>
+                <Button
+                  onClick={generateFromCanvas}
+                  disabled={isGenerating}
+                  className="w-full h-12 bg-black text-white hover:bg-gray-800 font-medium rounded-lg"
+                >
+                  {isGenerating ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      Generating...
+                    </>
+                  ) : (
+                    selectedImageForEdit ? 'Edit Image' : 'Generate'
+                  )}
+                </Button>
+                
+                {/* Test Button */}
+                <Button
+                  onClick={generateImage}
+                  disabled={isGenerating || !prompt.trim()}
+                  className="w-full h-10 mt-2 bg-green-600 text-white hover:bg-green-700 font-medium rounded-lg"
+                  title="Generate image from prompt only (without canvas)"
+                >
+                  {isGenerating ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      Testing...
+                    </>
+                  ) : (
+                    '🧪 Test API (Prompt Only)'
+                  )}
+                </Button>
+              </>
             )}
             {selectedImageForEdit && (
               <p className="text-xs text-gray-500 mt-2 text-center">
