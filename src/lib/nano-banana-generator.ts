@@ -1,9 +1,10 @@
 // Nano Banana - Generador de imágenes inteligente
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import { getGeminiApiKey } from './config';
 
 // Inicializar Gemini API
 function initializeGemini(): GoogleGenerativeAI {
-  const apiKey = import.meta.env.VITE_GEMINI_API_KEY || 'AIzaSyBUS-C-IEbmt8teK2UbgCL--EDYKe8Mxas';
+  const apiKey = getGeminiApiKey();
   return new GoogleGenerativeAI(apiKey);
 }
 

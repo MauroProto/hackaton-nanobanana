@@ -34,8 +34,8 @@ export async function generateWithGeminiReal(
       model: IMAGE_MODEL // MODELO DE GENERACIÓN DE IMÁGENES
     });
     
-    // Construir el prompt descriptivo y sanitizarlo
-    let prompt = sanitizePrompt(userPrompt || 'Transform this sketch into a detailed, photorealistic image');
+    // Construir el prompt descriptivo
+    let prompt = userPrompt || 'Transform this sketch into a detailed, photorealistic image';
     
     // Agregar estilos si los hay
     if (styles && styles.length > 0) {
@@ -80,7 +80,7 @@ export async function generateWithGeminiReal(
     
     // Validate base64
     if (!cleanCanvas || cleanCanvas.length < 100) {
-      geminiLogger.error('❌ Canvas base64 inválido o muy corto');
+      console.error('❌ Canvas base64 inválido o muy corto');
       return {
         generatedImages: [],
         error: 'El canvas está vacío o es inválido'
@@ -98,25 +98,25 @@ export async function generateWithGeminiReal(
       }
     ]);
     
-    geminiLogger.log('📥 Respuesta recibida del modelo');
+    console.log('📥 Respuesta recibida del modelo');
     
     const response = await result.response;
     
     // Buscar la imagen generada en la respuesta
     if (response.candidates && response.candidates[0]) {
       const candidate = response.candidates[0];
-      geminiLogger.log('✅ Candidato encontrado');
+      console.log('✅ Candidato encontrado');
       
       if (candidate.content && candidate.content.parts) {
-        geminiLogger.log(`📦 Partes en la respuesta: ${candidate.content.parts.length}`);
+        console.log(`📦 Partes en la respuesta: ${candidate.content.parts.length}`);
         
         // Buscar la imagen generada
         for (const part of candidate.content.parts) {
           // La imagen generada viene como inlineData
           if (part.inlineData && part.inlineData.data) {
-            geminiLogger.log('🎉 ¡IMAGEN GENERADA ENCONTRADA!');
-            geminiLogger.log('📊 Tipo MIME:', part.inlineData.mimeType);
-            geminiLogger.log('📏 Tamaño de datos:', part.inlineData.data.length);
+            console.log('🎉 ¡IMAGEN GENERADA ENCONTRADA!');
+            console.log('📊 Tipo MIME:', part.inlineData.mimeType);
+            console.log('📏 Tamaño de datos:', part.inlineData.data.length);
             
             // DEVOLVER LA IMAGEN GENERADA
             return {
@@ -127,18 +127,18 @@ export async function generateWithGeminiReal(
           
           // Si hay texto, mostrarlo (puede ser explicación del modelo)
           if (part.text) {
-            geminiLogger.log('📝 Texto del modelo:', part.text.substring(0, 200));
+            console.log('📝 Texto del modelo:', part.text.substring(0, 200));
           }
         }
       }
     }
     
     // Si no se generó imagen
-    geminiLogger.error('⚠️ El modelo no devolvió una imagen generada');
-    geminiLogger.log('💡 Esto puede pasar si:');
-    geminiLogger.log('1. El modelo gemini-2.5-flash-image-preview no está disponible en tu región');
-    geminiLogger.log('2. La API key no tiene permisos para generar imágenes');
-    geminiLogger.log('3. El contenido fue bloqueado por filtros de seguridad');
+    console.error('⚠️ El modelo no devolvió una imagen generada');
+    console.log('💡 Esto puede pasar si:');
+    console.log('1. El modelo gemini-2.5-flash-image-preview no está disponible en tu región');
+    console.log('2. La API key no tiene permisos para generar imágenes');
+    console.log('3. El contenido fue bloqueado por filtros de seguridad');
     
     return {
       generatedImages: [],
@@ -146,7 +146,7 @@ export async function generateWithGeminiReal(
     };
     
   } catch (error) {
-    geminiLogger.error('❌ Error llamando a Gemini:', error);
+    console.error('❌ Error llamando a Gemini:', error);
     
     if (error instanceof Error) {
       if (error.message.includes('404')) {
@@ -182,7 +182,7 @@ export async function editWithGeminiReal(
   maskImage: string,
   instruction: string
 ): Promise<{ generatedImages: string[], error?: string }> {
-  geminiLogger.log('🎨 === EDICIÓN LOCAL CON GEMINI ===');
+  console.log('🎨 === EDICIÓN LOCAL CON GEMINI ===');
   
   try {
     const ai = initializeGemini();
@@ -196,7 +196,7 @@ export async function editWithGeminiReal(
     Maintain the style, lighting, and perspective of the original image.
     Only modify the masked area.`;
     
-    geminiLogger.log('📝 Instrucción de edición:', instruction);
+    console.log('📝 Instrucción de edición:', instruction);
     
     // Enviar imagen base + máscara + instrucción - FORMATO CORRECTO
     const result = await model.generateContent([
@@ -224,7 +224,7 @@ export async function editWithGeminiReal(
       if (candidate.content && candidate.content.parts) {
         for (const part of candidate.content.parts) {
           if (part.inlineData && part.inlineData.data) {
-            geminiLogger.log('✅ Imagen editada generada');
+            console.log('✅ Imagen editada generada');
             return {
               generatedImages: [part.inlineData.data],
               error: undefined
@@ -240,7 +240,7 @@ export async function editWithGeminiReal(
     };
     
   } catch (error) {
-    geminiLogger.error('❌ Error en edición:', error);
+    console.error('❌ Error en edición:', error);
     return {
       generatedImages: [],
       error: error instanceof Error ? error.message : 'Error desconocido'
@@ -253,7 +253,7 @@ export async function composeWithGeminiReal(
   images: string[],
   instruction: string
 ): Promise<{ generatedImages: string[], error?: string }> {
-  geminiLogger.log('🎭 === COMPOSICIÓN/TRANSFERENCIA DE ESTILO ===');
+  console.log('🎭 === COMPOSICIÓN/TRANSFERENCIA DE ESTILO ===');
   
   try {
     const ai = initializeGemini();
@@ -265,7 +265,7 @@ export async function composeWithGeminiReal(
     const contents: any[] = [instruction]; // Texto primero
     
     images.forEach((img, index) => {
-      geminiLogger.log(`📸 Añadiendo imagen ${index + 1}`);
+      console.log(`📸 Añadiendo imagen ${index + 1}`);
       contents.push({
         inlineData: {
           data: img,
@@ -284,7 +284,7 @@ export async function composeWithGeminiReal(
       if (candidate.content && candidate.content.parts) {
         for (const part of candidate.content.parts) {
           if (part.inlineData && part.inlineData.data) {
-            geminiLogger.log('✅ Imagen compuesta generada');
+            console.log('✅ Imagen compuesta generada');
             return {
               generatedImages: [part.inlineData.data],
               error: undefined
@@ -300,7 +300,7 @@ export async function composeWithGeminiReal(
     };
     
   } catch (error) {
-    geminiLogger.error('❌ Error en composición:', error);
+    console.error('❌ Error en composición:', error);
     return {
       generatedImages: [],
       error: error instanceof Error ? error.message : 'Error desconocido'
@@ -315,9 +315,9 @@ export async function editWithBaseAndOverlay(
   instruction?: string,
   styles?: string[]
 ): Promise<{ generatedImages: string[], error?: string }> {
-  geminiLogger.log('🎨 === EDICIÓN INTELIGENTE CON BASE + OVERLAY ===');
-  geminiLogger.log('📊 Detectando cambios y agregando elementos nuevos...');
-  geminiLogger.log('📸 Tamaños de entrada:', {
+  console.log('🎨 === EDICIÓN INTELIGENTE CON BASE + OVERLAY ===');
+  console.log('📊 Detectando cambios y agregando elementos nuevos...');
+  console.log('📸 Tamaños de entrada:', {
     baseImageLength: baseImage?.length || 0,
     overlayCanvasLength: overlayCanvas?.length || 0,
     hasInstruction: !!instruction,
@@ -419,12 +419,12 @@ export async function editWithBaseAndOverlay(
       prompt += `, ${styleDescriptions}`;
     }
     
-    geminiLogger.log('📝 Prompt de edición:', prompt.substring(0, 200));
-    geminiLogger.log('🖼️ Enviando imagen base + overlay...');
+    console.log('📝 Prompt de edición:', prompt.substring(0, 200));
+    console.log('🖼️ Enviando imagen base + overlay...');
     
     // Validate base64 strings
     if (!baseImage || baseImage.length < 100) {
-      geminiLogger.error('❌ Base image invalida o muy corta');
+      console.error('❌ Base image invalida o muy corta');
       return {
         generatedImages: [],
         error: 'La imagen base es inválida o está vacía'
@@ -432,7 +432,7 @@ export async function editWithBaseAndOverlay(
     }
     
     if (!overlayCanvas || overlayCanvas.length < 100) {
-      geminiLogger.error('❌ Overlay canvas invalido o muy corto');
+      console.error('❌ Overlay canvas invalido o muy corto');
       return {
         generatedImages: [],
         error: 'El canvas con ediciones es inválido o está vacío'
@@ -443,7 +443,7 @@ export async function editWithBaseAndOverlay(
     const cleanBase = baseImage.includes(',') ? baseImage.split(',')[1] : baseImage;
     const cleanOverlay = overlayCanvas.includes(',') ? overlayCanvas.split(',')[1] : overlayCanvas;
     
-    geminiLogger.log('🧹 Base64 limpio:', {
+    console.log('🧹 Base64 limpio:', {
       baseLength: cleanBase.length,
       overlayLength: cleanOverlay.length
     });
@@ -473,7 +473,7 @@ export async function editWithBaseAndOverlay(
       }
     ]);
     
-    geminiLogger.log('📥 Respuesta recibida');
+    console.log('📥 Respuesta recibida');
     
     const response = await result.response;
     
@@ -484,8 +484,8 @@ export async function editWithBaseAndOverlay(
       if (candidate.content && candidate.content.parts) {
         for (const part of candidate.content.parts) {
           if (part.inlineData && part.inlineData.data) {
-            geminiLogger.log('✅ Imagen editada generada exitosamente');
-            geminiLogger.log('🎉 Nuevos elementos integrados a la imagen base');
+            console.log('✅ Imagen editada generada exitosamente');
+            console.log('🎉 Nuevos elementos integrados a la imagen base');
             
             return {
               generatedImages: [part.inlineData.data],
@@ -494,21 +494,21 @@ export async function editWithBaseAndOverlay(
           }
           
           if (part.text) {
-            geminiLogger.log('📝 Respuesta del modelo:', part.text.substring(0, 200));
+            console.log('📝 Respuesta del modelo:', part.text.substring(0, 200));
           }
         }
       }
     }
     
-    geminiLogger.error('⚠️ No se pudo editar la imagen');
+    console.error('⚠️ No se pudo editar la imagen');
     return {
       generatedImages: [],
       error: 'No se pudo procesar la edición'
     };
     
   } catch (error: any) {
-    geminiLogger.error('❌ Error en edición con overlay:', error);
-    geminiLogger.error('📝 Detalles del error:', {
+    console.error('❌ Error en edición con overlay:', error);
+    console.error('📝 Detalles del error:', {
       message: error?.message,
       name: error?.name,
       stack: error?.stack?.substring(0, 500)
@@ -542,8 +542,8 @@ export async function mergeImages(
   image2: string,
   prompt: string = 'Merge these two elements seamlessly into one cohesive image without any borders'
 ): Promise<string | null> {
-  geminiLogger.log('🔀 === MERGING TWO IMAGES ===');
-  geminiLogger.log('📊 Input sizes:', {
+  console.log('🔀 === MERGING TWO IMAGES ===');
+  console.log('📊 Input sizes:', {
     image1Length: image1?.length || 0,
     image2Length: image2?.length || 0,
     hasPrompt: !!prompt
@@ -579,7 +579,7 @@ export async function mergeImages(
     - Professional composition
     - Natural lighting and shadows where elements meet`;
     
-    geminiLogger.log('📝 Merge prompt:', mergePrompt);
+    console.log('📝 Merge prompt:', mergePrompt);
     
     const contents = [
       mergePrompt,
@@ -597,11 +597,11 @@ export async function mergeImages(
       }
     ];
     
-    geminiLogger.log('🚀 Sending merge request to Gemini...');
+    console.log('🚀 Sending merge request to Gemini...');
     const result = await model.generateContent(contents);
     const response = await result.response;
     
-    geminiLogger.log('📨 Response received from Gemini');
+    console.log('📨 Response received from Gemini');
     
     // Look for merged image
     if (response.candidates && response.candidates[0]) {
@@ -610,16 +610,16 @@ export async function mergeImages(
       if (candidate.content && candidate.content.parts) {
         for (const part of candidate.content.parts) {
           if (part.inlineData && part.inlineData.data) {
-            geminiLogger.log('✅ Images merged successfully');
-            geminiLogger.log('📏 Output size:', part.inlineData.data.length);
+            console.log('✅ Images merged successfully');
+            console.log('📏 Output size:', part.inlineData.data.length);
             return part.inlineData.data;
           }
         }
       }
     }
     
-    geminiLogger.error('❌ No merged image in response');
-    geminiLogger.log('📊 Response structure:', {
+    console.error('❌ No merged image in response');
+    console.log('📊 Response structure:', {
       hasCandidates: !!response.candidates,
       candidatesLength: response.candidates?.length || 0,
       firstCandidate: !!response.candidates?.[0],
@@ -631,10 +631,10 @@ export async function mergeImages(
     return null;
     
   } catch (error) {
-    geminiLogger.error('❌ Error merging images:', error);
+    console.error('❌ Error merging images:', error);
     if (error instanceof Error) {
-      geminiLogger.error('Error details:', error.message);
-      geminiLogger.error('Stack:', error.stack);
+      console.error('Error details:', error.message);
+      console.error('Stack:', error.stack);
     }
     return null;
   }

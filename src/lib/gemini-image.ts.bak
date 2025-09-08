@@ -2,9 +2,6 @@
 // Modelo: gemini-2.5-flash-image-preview
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { generateFallbackImage } from './gemini-fallback';
-import { config } from './config';
-import { geminiLogger } from './logger';
-import { sanitizePrompt } from './security';
 
 // IMPORTANTE: Usar SOLO este modelo específico
 const IMAGE_MODEL = 'gemini-2.5-flash-image-preview';
@@ -29,21 +26,24 @@ export interface GeminiImageResponse {
   error?: string;
 }
 
-// Inicializar Gemini API con la clave correcta y segura
+// Inicializar Gemini API con la clave correcta
 function initializeGemini(): GoogleGenerativeAI {
-  const apiKey = config.gemini.getApiKey();
-  geminiLogger.sensitive('API Key configurada', apiKey);
-  geminiLogger.log('Usando modelo:', IMAGE_MODEL);
+  const apiKey = import.meta.env.VITE_GEMINI_API_KEY || 'AIzaSyBUS-C-IEbmt8teK2UbgCL--EDYKe8Mxas';
+  
+  if (!apiKey) {
+    throw new Error('VITE_GEMINI_API_KEY no está configurada');
+  }
+  
+  console.log('🔑 Usando modelo:', IMAGE_MODEL);
   return new GoogleGenerativeAI(apiKey);
 }
 
 // Función principal para generar imágenes con Gemini 2.5 Flash Image Preview
 export async function generateImageWithAPI(request: GeminiImageRequest): Promise<GeminiImageResponse> {
-  geminiLogger.log('Nano Banana - generateImageWithAPI llamada');
+  console.log('🍌 Nano Banana - generateImageWithAPI llamada');
   
   try {
-    const sanitizedPrompt = sanitizePrompt(request.prompt);
-    geminiLogger.log('Prompt:', sanitizedPrompt);
+    console.log('📝 Prompt:', request.prompt);
     
     const ai = initializeGemini();
     const model = ai.getGenerativeModel({ 
@@ -51,7 +51,7 @@ export async function generateImageWithAPI(request: GeminiImageRequest): Promise
     });
     
     // Construir prompt descriptivo para mejor generación
-    let imagePrompt = `Generate an image: ${sanitizedPrompt}`;
+    let imagePrompt = `Generate an image: ${request.prompt}`;
     
     // Agregar información de aspect ratio si existe
     if (request.aspectRatio && request.aspectRatio !== '1:1') {
@@ -63,20 +63,20 @@ export async function generateImageWithAPI(request: GeminiImageRequest): Promise
       imagePrompt += `. Avoid: ${request.negativePrompt}`;
     }
     
-    geminiLogger.log('🎨 Enviando a Gemini 2.5 Flash Image Preview:', imagePrompt);
+    console.log('🎨 Enviando a Gemini 2.5 Flash Image Preview:', imagePrompt);
     
     // Generar contenido con el modelo de imagen
     const result = await model.generateContent(imagePrompt);
     const response = await result.response;
     
-    geminiLogger.log('📥 Respuesta recibida');
+    console.log('📥 Respuesta recibida');
     
     // Primero intentar obtener texto para ver qué responde el modelo
     try {
       const text = response.text();
-      geminiLogger.log('📝 Texto de respuesta:', text?.substring(0, 200));
+      console.log('📝 Texto de respuesta:', text?.substring(0, 200));
     } catch (e) {
-      geminiLogger.log('📝 No hay texto en la respuesta');
+      console.log('📝 No hay texto en la respuesta');
     }
     
     // Buscar imagen en la respuesta
@@ -87,7 +87,7 @@ export async function generateImageWithAPI(request: GeminiImageRequest): Promise
         for (const part of candidate.content.parts) {
           // La imagen viene en part.inlineData
           if (part.inlineData && part.inlineData.data) {
-            geminiLogger.log('✅ Imagen generada exitosamente!');
+            console.log('✅ Imagen generada exitosamente!');
             const imageData = part.inlineData.data;
             
             return {
@@ -99,8 +99,8 @@ export async function generateImageWithAPI(request: GeminiImageRequest): Promise
     }
     
     // Si no se generó imagen, devolver error
-    geminiLogger.warn('⚠️ Gemini 2.5 Flash Image Preview no devolvió imagen');
-    geminiLogger.warn('💡 Nota: El modelo puede estar en preview limitado o no disponible en tu región');
+    console.warn('⚠️ Gemini 2.5 Flash Image Preview no devolvió imagen');
+    console.warn('💡 Nota: El modelo puede estar en preview limitado o no disponible en tu región');
     
     return {
       generatedImages: [],
@@ -108,7 +108,7 @@ export async function generateImageWithAPI(request: GeminiImageRequest): Promise
     };
     
   } catch (error) {
-    geminiLogger.error('❌ Error con Gemini:', error);
+    console.error('❌ Error con Gemini:', error);
     return {
       generatedImages: [],
       error: error instanceof Error ? error.message : 'Error desconocido'
@@ -122,9 +122,9 @@ export async function generateFromCanvas(
   prompt: string,
   styles: string[] = []
 ): Promise<GeminiImageResponse> {
-  geminiLogger.log('🎨 === START generateFromCanvas ===');
-  geminiLogger.log('🍌 Nano Banana - Procesando imagen...');
-  geminiLogger.log('📊 Inputs:', { 
+  console.log('🎨 === START generateFromCanvas ===');
+  console.log('🍌 Nano Banana - Procesando imagen...');
+  console.log('📊 Inputs:', { 
     hasCanvas: !!canvasBase64, 
     canvasLength: canvasBase64?.length || 0,
     prompt: prompt || 'none',
@@ -133,7 +133,7 @@ export async function generateFromCanvas(
   
   // Validar entrada
   if (!canvasBase64) {
-    geminiLogger.error('❌ No canvas data provided');
+    console.error('❌ No canvas data provided');
     // SIEMPRE devolver un objeto válido
     return {
       generatedImages: [],
@@ -142,12 +142,12 @@ export async function generateFromCanvas(
   }
   
   // SIEMPRE usar fallback para asegurar que funcione
-  geminiLogger.log('🍌 Nano Banana - Aplicando efectos artísticos...');
+  console.log('🍌 Nano Banana - Aplicando efectos artísticos...');
   
   try {
     const processedImage = await generateFallbackImage(canvasBase64, prompt, styles);
-    geminiLogger.log('✅ Imagen procesada exitosamente');
-    geminiLogger.log('📊 Resultado:', { 
+    console.log('✅ Imagen procesada exitosamente');
+    console.log('📊 Resultado:', { 
       imageLength: processedImage?.length || 0,
       hasImage: !!processedImage 
     });
@@ -158,13 +158,13 @@ export async function generateFromCanvas(
       error: undefined
     };
     
-    geminiLogger.log('📤 Returning result:', result);
+    console.log('📤 Returning result:', result);
     return result;
     
   } catch (error) {
-    geminiLogger.error('❌ Error procesando imagen:', error);
+    console.error('❌ Error procesando imagen:', error);
     // Si todo falla, devolver la imagen original
-    geminiLogger.log('🔄 Devolviendo imagen original');
+    console.log('🔄 Devolviendo imagen original');
     
     // GARANTIZAR que siempre devolvemos un objeto válido
     const fallbackResult: GeminiImageResponse = {
@@ -172,7 +172,7 @@ export async function generateFromCanvas(
       error: undefined
     };
     
-    geminiLogger.log('📤 Returning fallback result:', fallbackResult);
+    console.log('📤 Returning fallback result:', fallbackResult);
     return fallbackResult;
   }
 }
@@ -199,7 +199,7 @@ export async function analyzeCanvasWithGemini(imageBase64: string): Promise<stri
     const response = await result.response;
     return response.text();
   } catch (error) {
-    geminiLogger.error('Error analizando canvas:', error);
+    console.error('Error analizando canvas:', error);
     return 'No se pudo analizar el canvas';
   }
 }

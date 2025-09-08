@@ -1,8 +1,5 @@
 // Integración de Gemini para TLDraw
 import { GoogleGenerativeAI } from '@google/generative-ai';
-import { config } from './config';
-import { geminiLogger } from './logger';
-import { sanitizePrompt } from './security';
 
 // Interfaces simplificadas para TLDraw
 export interface GeminiImageRequest {
@@ -24,24 +21,27 @@ export interface GeminiImageResponse {
   error?: string;
 }
 
-// Inicializar Gemini API de forma segura
+// Inicializar Gemini API
 function initializeGemini(): GoogleGenerativeAI {
-  const apiKey = config.gemini.getApiKey();
-  geminiLogger.sensitive('Initializing Gemini API', apiKey);
+  const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+  
+  if (!apiKey) {
+    throw new Error('VITE_GEMINI_API_KEY no está configurada en las variables de entorno');
+  }
+  
   return new GoogleGenerativeAI(apiKey);
 }
 
 // Función para generar un prompt mejorado usando Gemini
 async function enhancePromptWithGemini(prompt: string, styles: string[] = []): Promise<string> {
   try {
-    const sanitizedPrompt = sanitizePrompt(prompt);
     const ai = initializeGemini();
     const model = ai.getGenerativeModel({ model: 'gemini-1.5-flash' });
     
     const styleDescriptions = styles.join(', ');
     const enhancementPrompt = `
 You are an expert at creating detailed image generation prompts. 
-Given this user input: "${sanitizedPrompt}"
+Given this user input: "${prompt}"
 ${styles.length > 0 ? `Apply these styles: ${styleDescriptions}` : ''}
 
 Create a detailed, descriptive prompt for image generation that:
@@ -56,10 +56,10 @@ Return ONLY the enhanced prompt, no explanations.`;
     const response = await result.response;
     const enhancedPrompt = response.text();
     
-    geminiLogger.log('Enhanced prompt:', enhancedPrompt);
+    console.log('Enhanced prompt:', enhancedPrompt);
     return enhancedPrompt;
   } catch (error) {
-    geminiLogger.error('Error enhancing prompt with Gemini:', error);
+    console.error('Error enhancing prompt with Gemini:', error);
     return prompt; // Fallback to original prompt
   }
 }
@@ -170,7 +170,7 @@ async function generateImageFromPrompt(
 // Función principal para generar imágenes
 export async function generateImageWithAPI(request: GeminiImageRequest): Promise<GeminiImageResponse> {
   try {
-    geminiLogger.log('🎨 Generando imagen con TLDraw + Gemini:', request.prompt);
+    console.log('🎨 Generando imagen con TLDraw + Gemini:', request.prompt);
     
     // Mejorar el prompt usando Gemini
     const enhancedPrompt = await enhancePromptWithGemini(
@@ -214,14 +214,14 @@ export async function generateImageWithAPI(request: GeminiImageRequest): Promise
     // const base64Image = await callStableDiffusionAPI(enhancedPrompt, width, height);
     // const base64Image = await callDALLEAPI(enhancedPrompt, width, height);
     
-    geminiLogger.log('✅ Imagen generada (demo). Para imágenes reales, integra con Stable Diffusion, DALL-E, o Midjourney');
+    console.log('✅ Imagen generada (demo). Para imágenes reales, integra con Stable Diffusion, DALL-E, o Midjourney');
     
     return {
       generatedImages: [base64Image]
     };
     
   } catch (error) {
-    geminiLogger.error('❌ Error generando imagen:', error);
+    console.error('❌ Error generando imagen:', error);
     return {
       error: error instanceof Error ? error.message : 'Error desconocido'
     };
@@ -256,7 +256,7 @@ export async function analyzeCanvasWithGemini(imageBase64: string): Promise<stri
     const response = await result.response;
     return response.text();
   } catch (error) {
-    geminiLogger.error('Error analyzing canvas:', error);
+    console.error('Error analyzing canvas:', error);
     return 'Unable to analyze the canvas';
   }
 }

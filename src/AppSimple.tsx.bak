@@ -164,19 +164,19 @@ function AppSimple() {
 
   // Generar imagen con Nano Banana
   const generateImage = async () => {
-    logger.log('🍌 GENERANDO CON NANO BANANA...');
+    console.log('🍌 GENERANDO CON NANO BANANA...');
     setIsGenerating(true);
     
     try {
       // SIEMPRE capturar el lienzo actual
       const canvasBlob = await captureCanvas();
       if (!canvasBlob) {
-        logger.error('No se pudo capturar el lienzo');
+        console.error('No se pudo capturar el lienzo');
         setIsGenerating(false);
         return;
       }
       
-      logger.log('📸 Lienzo capturado:', canvasBlob.size, 'bytes');
+      console.log('📸 Lienzo capturado:', canvasBlob.size, 'bytes');
       
       // Construir prompt completo
       let fullPrompt = prompt || 'beautiful artwork, high quality, detailed';
@@ -187,26 +187,26 @@ function AppSimple() {
         }
       }
       
-      logger.log('📝 Prompt completo:', fullPrompt);
+      console.log('📝 Prompt completo:', fullPrompt);
       
       // Usar Pollinations.ai para generar la imagen (API gratuita)
       // Esta API genera imágenes reales basadas en prompts de texto
       const imageUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(fullPrompt)}?width=512&height=512&nologo=true&seed=${Math.floor(Math.random() * 1000000)}`;
       
-      logger.log('🎨 Generando imagen con URL:', imageUrl);
+      console.log('🎨 Generando imagen con URL:', imageUrl);
       
       // Crear una nueva imagen y esperar a que cargue
       const img = new Image();
       img.crossOrigin = 'anonymous';
       
       img.onload = () => {
-        logger.log('✅ Imagen generada exitosamente');
+        console.log('✅ Imagen generada exitosamente');
         setGeneratedImages(prev => [...prev.slice(-9), imageUrl]);
         setIsGenerating(false);
       };
       
       img.onerror = (error) => {
-        logger.error('❌ Error cargando imagen:', error);
+        console.error('❌ Error cargando imagen:', error);
         // Fallback: crear una imagen de ejemplo si falla
         const fallbackUrl = `data:image/svg+xml;base64,${btoa(`
           <svg xmlns="http://www.w3.org/2000/svg" width="512" height="512">
@@ -279,19 +279,19 @@ function AppSimple() {
               const data = await response.json();
               const analysis = data.candidates?.[0]?.content?.parts?.[0]?.text;
               if (analysis) {
-                logger.log('🔍 Análisis del lienzo:', analysis);
+                console.log('🔍 Análisis del lienzo:', analysis);
                 // Podríamos usar este análisis para mejorar el prompt en futuras versiones
               }
             }
           } catch (error) {
-            logger.log('⚠️ No se pudo analizar el lienzo con Gemini:', error);
+            console.log('⚠️ No se pudo analizar el lienzo con Gemini:', error);
           }
         };
         reader.readAsDataURL(canvasBlob);
       }
       
     } catch (error) {
-      logger.error('Error generando imagen:', error);
+      console.error('Error generando imagen:', error);
       setIsGenerating(false);
     }
   };

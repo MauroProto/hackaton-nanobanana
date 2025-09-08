@@ -1,9 +1,6 @@
 // Utilidades para la integración con Gemini 2.5 Flash Image API (Nano Banana)
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { GeminiImageRequest, GeminiImageResponse } from '../types';
-import { config } from './config';
-import { geminiLogger } from './logger';
-import { sanitizePrompt } from './security';
 
 // Interfaces para análisis inteligente
 export interface DrawingAnalysis {
@@ -83,8 +80,8 @@ export interface ContextualAnalysis {
   };
 }
 
-// Configuración de Gemini - usando configuración segura
-const getGeminiApiKey = () => config.gemini.getApiKey();
+// Configuración de Gemini
+const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY || 'AIzaSyDWx4loOXlgdKduD_VzRVwG2_6B_NoeoaY';
 
 // Modelo principal para análisis y procesamiento de texto
 const MODEL_NAME = 'gemini-2.0-flash-exp';
@@ -105,9 +102,7 @@ let genAI: GoogleGenerativeAI | null = null;
 
 function initializeGemini(): GoogleGenerativeAI {
   if (!genAI) {
-    const apiKey = getGeminiApiKey();
-    genAI = new GoogleGenerativeAI(apiKey);
-    geminiLogger.sensitive('Gemini API inicializada', apiKey);
+    genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
   }
   return genAI;
 }
@@ -179,10 +174,9 @@ async function resizeImageIfNeeded(blob: Blob, maxSize: number = 2048): Promise<
 
 // Construir prompt para Gemini basado en el template de la documentación
 function buildGeminiPrompt(request: GeminiImageRequest): string {
-  const sanitizedPrompt = sanitizePrompt(request.user_prompt);
   const basePrompt = `You are an advanced AI image generation and editing assistant. Your task is to ${request.mode === 'generate' ? 'create' : 'edit'} an image based on the user's request.
 
-**User Request:** ${sanitizedPrompt}
+**User Request:** ${request.user_prompt}
 
 **Generation Parameters:**
 - Edit Strength: ${request.edit_strength}
@@ -209,7 +203,7 @@ ${request.seed ? `- Seed: ${request.seed}` : ''}
 
 // Función para generar imagen usando Gemini 2.5 Flash Image Preview (Nano Banana)
 export async function generateImageWithAPISimple(prompt: string, width: number = 1024, height: number = 1024): Promise<Blob> {
-  geminiLogger.log('🍌 Generando imagen con Nano Banana (Gemini 2.5 Flash Image):', prompt);
+  console.log('🍌 Generando imagen con Nano Banana (Gemini 2.5 Flash Image):', prompt);
   
   const ai = initializeGemini();
   const model = ai.getGenerativeModel({ model: IMAGE_MODEL_NAME });
@@ -217,7 +211,7 @@ export async function generateImageWithAPISimple(prompt: string, width: number =
   // Preparar el prompt optimizado para generación de imágenes
   const imagePrompt = `${prompt}`;
   
-  geminiLogger.log('📡 Llamando a Gemini 2.5 Flash Image API...');
+  console.log('📡 Llamando a Gemini 2.5 Flash Image API...');
   
   // Generar contenido con el modelo de imagen
   const result = await model.generateContent(imagePrompt);
@@ -225,7 +219,7 @@ export async function generateImageWithAPISimple(prompt: string, width: number =
   const response = await result.response;
   const text = response.text();
   
-  geminiLogger.log('📝 Respuesta recibida de Gemini');
+  console.log('📝 Respuesta recibida de Gemini');
   
   // El modelo Gemini 2.5 Flash Image devuelve la imagen en formato base64 en el texto
   // o en parts con inlineData
@@ -239,13 +233,13 @@ export async function generateImageWithAPISimple(prompt: string, width: number =
       for (const part of candidate.content.parts) {
         // Buscar datos de imagen inline
         if (part.inlineData && part.inlineData.data) {
-          geminiLogger.log('🖼️ Imagen encontrada en inlineData');
+          console.log('🖼️ Imagen encontrada en inlineData');
           const imageData = part.inlineData.data;
           const mimeType = part.inlineData.mimeType || 'image/png';
           
           // Convertir base64 a Blob
           imageBlob = base64ToBlob(imageData, mimeType);
-          geminiLogger.log('✅ Imagen generada exitosamente con Nano Banana:', imageBlob.size, 'bytes');
+          console.log('✅ Imagen generada exitosamente con Nano Banana:', imageBlob.size, 'bytes');
           return imageBlob;
         }
       }
@@ -254,20 +248,20 @@ export async function generateImageWithAPISimple(prompt: string, width: number =
   
   // Si el texto contiene base64 (algunos modelos devuelven la imagen así)
   if (text && text.includes('data:image')) {
-    geminiLogger.log('🖼️ Imagen encontrada en formato data URL');
+    console.log('🖼️ Imagen encontrada en formato data URL');
     const match = text.match(/data:image\/(png|jpeg|jpg|webp);base64,([^"'\s]+)/);
     if (match) {
       const mimeType = `image/${match[1]}`;
       const base64Data = match[2];
       imageBlob = base64ToBlob(base64Data, mimeType);
-      geminiLogger.log('✅ Imagen generada exitosamente:', imageBlob.size, 'bytes');
+      console.log('✅ Imagen generada exitosamente:', imageBlob.size, 'bytes');
       return imageBlob;
     }
   }
   
   // Si llegamos aquí, no se encontró imagen
-  geminiLogger.error('❌ No se pudo extraer la imagen de la respuesta de Gemini');
-  geminiLogger.log('Respuesta completa:', text.substring(0, 500));
+  console.error('❌ No se pudo extraer la imagen de la respuesta de Gemini');
+  console.log('Respuesta completa:', text.substring(0, 500));
   
   throw new Error('Gemini 2.5 Flash Image no devolvió una imagen válida');
 }
@@ -284,7 +278,7 @@ export async function generateWithGemini(request: GeminiImageRequest): Promise<G
     
     // Imagen base (para análisis y mejora del prompt)
     if (request.base_image) {
-      geminiLogger.log('Procesando imagen base del canvas para análisis...');
+      console.log('Procesando imagen base del canvas para análisis...');
       const resizedBase = await resizeImageIfNeeded(request.base_image);
       const baseBase64 = await blobToBase64(resizedBase);
       imageParts.push({
@@ -299,7 +293,7 @@ export async function generateWithGemini(request: GeminiImageRequest): Promise<G
     let imageAnalysis = '';
     if (request.base_image && imageParts.length > 0) {
       try {
-        geminiLogger.log('Analizando el dibujo del usuario con Gemini...');
+        console.log('Analizando el dibujo del usuario con Gemini...');
         const analysisResult = await model.generateContent([
           'Analiza esta imagen detalladamente. Describe qué objetos ves, qué está dibujado, la composición, las formas y qué podría estar intentando representar el usuario. Sé específico sobre posiciones y elementos.',
           ...imageParts
@@ -307,9 +301,9 @@ export async function generateWithGemini(request: GeminiImageRequest): Promise<G
         
         const analysisResponse = await analysisResult.response;
         imageAnalysis = analysisResponse.text();
-        geminiLogger.log('Análisis del dibujo:', imageAnalysis);
+        console.log('Análisis del dibujo:', imageAnalysis);
       } catch (error) {
-        geminiLogger.warn('No se pudo analizar la imagen base:', error);
+        console.warn('No se pudo analizar la imagen base:', error);
       }
     }
     
@@ -343,10 +337,10 @@ export async function generateWithGemini(request: GeminiImageRequest): Promise<G
       const geminiText = response.text();
       if (geminiText && geminiText.length > 10) {
         enhancedPrompt = geminiText.trim();
-        geminiLogger.log('Prompt mejorado:', enhancedPrompt);
+        console.log('Prompt mejorado:', enhancedPrompt);
       }
     } catch (error) {
-      geminiLogger.warn('No se pudo mejorar el prompt con Gemini:', error);
+      console.warn('No se pudo mejorar el prompt con Gemini:', error);
     }
     
     // Generar la imagen usando Nano Banana (Gemini 2.5 Flash Image)
@@ -354,8 +348,8 @@ export async function generateWithGemini(request: GeminiImageRequest): Promise<G
       ? `${enhancedPrompt} [Basado en el dibujo: ${imageAnalysis.substring(0, 100)}...]`
       : enhancedPrompt;
     
-    geminiLogger.log('🍌 Usando Nano Banana para generar la imagen...');
-    const imageBlob = await generateImageWithAPISimple(finalPrompt, 1024, 1024);
+    console.log('🍌 Usando Nano Banana para generar la imagen...');
+    const imageBlob = await generateImageWithAPI(finalPrompt, 1024, 1024);
     
     return {
       image: imageBlob,
@@ -366,7 +360,7 @@ export async function generateWithGemini(request: GeminiImageRequest): Promise<G
     };
     
   } catch (error) {
-    geminiLogger.error('❌ Error generando con Nano Banana:', error);
+    console.error('❌ Error generando con Nano Banana:', error);
     return {
       image: new Blob(),
       brief_note: 'Error al generar imagen con Nano Banana',
@@ -378,21 +372,14 @@ export async function generateWithGemini(request: GeminiImageRequest): Promise<G
 
 // Función para validar la configuración de Gemini
 export function validateGeminiConfig(): { valid: boolean; error?: string } {
-  try {
-    const apiKey = getGeminiApiKey();
-    if (!apiKey || apiKey === 'your-api-key-here') {
-      return {
-        valid: false,
-        error: 'Gemini API key is not configured. Please set VITE_GEMINI_API_KEY in your environment variables.'
-      };
-    }
-    return { valid: true };
-  } catch (error) {
+  if (!GEMINI_API_KEY || GEMINI_API_KEY === 'your-api-key-here') {
     return {
       valid: false,
-      error: error instanceof Error ? error.message : 'Invalid API key configuration'
+      error: 'Gemini API key is not configured. Please set VITE_GEMINI_API_KEY in your environment variables.'
     };
   }
+  
+  return { valid: true };
 }
 
 // Función para obtener información del modelo
@@ -424,7 +411,7 @@ export async function canvasToBlob(canvas: any): Promise<Blob | null> {
   if (!canvas) return null;
   
   try {
-    geminiLogger.log('Converting canvas to blob...');
+    console.log('Converting canvas to blob...');
     
     // Para Fabric.js v6, usar toDataURL y luego convertir a Blob
     if (canvas.toDataURL) {
@@ -437,7 +424,7 @@ export async function canvasToBlob(canvas: any): Promise<Blob | null> {
       // Convertir dataURL a Blob
       const response = await fetch(dataUrl);
       const blob = await response.blob();
-      geminiLogger.log('Canvas converted to blob successfully:', blob.size, 'bytes');
+      console.log('Canvas converted to blob successfully:', blob.size, 'bytes');
       return blob;
     }
     
@@ -445,16 +432,16 @@ export async function canvasToBlob(canvas: any): Promise<Blob | null> {
     if (canvas instanceof HTMLCanvasElement) {
       return new Promise((resolve) => {
         canvas.toBlob((blob: Blob | null) => {
-          geminiLogger.log('HTMLCanvas converted to blob:', blob?.size, 'bytes');
+          console.log('HTMLCanvas converted to blob:', blob?.size, 'bytes');
           resolve(blob);
         }, 'image/png');
       });
     }
     
-    geminiLogger.warn('Canvas type not recognized');
+    console.warn('Canvas type not recognized');
     return null;
   } catch (error) {
-    geminiLogger.error('Error converting canvas to blob:', error);
+    console.error('Error converting canvas to blob:', error);
     return null;
   }
 }
@@ -466,7 +453,7 @@ export async function canvasToBlob(canvas: any): Promise<Blob | null> {
  * Usa Gemini para interpretar visualmente el contenido
  */
 export async function analyzeDrawing(drawingBlob: Blob): Promise<DrawingAnalysis> {
-  geminiLogger.log('🔍 Analizando dibujo del usuario con Nano Banana...');
+  console.log('🔍 Analizando dibujo del usuario con Nano Banana...');
   
   try {
     const ai = initializeGemini();
@@ -534,11 +521,11 @@ Devuelve ÚNICAMENTE un JSON válido con esta estructura exacta (sin markdown, s
     // Parsear JSON
     const analysis = JSON.parse(jsonText) as DrawingAnalysis;
     
-    geminiLogger.log('✅ Análisis del dibujo completado:', analysis);
+    console.log('✅ Análisis del dibujo completado:', analysis);
     return analysis;
     
   } catch (error) {
-    geminiLogger.error('❌ Error analizando dibujo:', error);
+    console.error('❌ Error analizando dibujo:', error);
     
     // Devolver análisis por defecto si falla
     return {
@@ -577,7 +564,7 @@ export async function analyzeModifications(
   originalBlob: Blob, 
   modifiedBlob: Blob
 ): Promise<ModificationAnalysis> {
-  geminiLogger.log('🔍 Analizando modificaciones entre imágenes...');
+  console.log('🔍 Analizando modificaciones entre imágenes...');
   
   try {
     const ai = initializeGemini();
@@ -659,11 +646,11 @@ Devuelve ÚNICAMENTE un JSON válido con esta estructura (sin markdown):
     
     const analysis = JSON.parse(jsonText) as ModificationAnalysis;
     
-    geminiLogger.log('✅ Análisis de modificaciones completado:', analysis);
+    console.log('✅ Análisis de modificaciones completado:', analysis);
     return analysis;
     
   } catch (error) {
-    geminiLogger.error('❌ Error analizando modificaciones:', error);
+    console.error('❌ Error analizando modificaciones:', error);
     
     // Devolver análisis por defecto
     return {
@@ -706,7 +693,7 @@ export async function generateFromDrawing(
   analysis: DrawingAnalysis,
   userPrompt?: string
 ): Promise<Blob> {
-  geminiLogger.log('🎨 Generando imagen profesional desde dibujo...');
+  console.log('🎨 Generando imagen profesional desde dibujo...');
   
   try {
     const ai = initializeGemini();
@@ -734,7 +721,7 @@ export async function generateFromDrawing(
       finalPrompt += `\n\nMejoras sugeridas: ${analysis.recommendations.suggestions.join('. ')}`;
     }
     
-    geminiLogger.log('📝 Prompt final para Nano Banana:', finalPrompt);
+    console.log('📝 Prompt final para Nano Banana:', finalPrompt);
     
     // Preparar el dibujo como referencia
     const drawingBase64 = await blobToBase64(drawingBlob);
@@ -763,7 +750,7 @@ export async function generateFromDrawing(
             const mimeType = part.inlineData.mimeType || 'image/png';
             const imageBlob = base64ToBlob(imageData, mimeType);
             
-            geminiLogger.log('✅ Imagen generada desde dibujo:', imageBlob.size, 'bytes');
+            console.log('✅ Imagen generada desde dibujo:', imageBlob.size, 'bytes');
             return imageBlob;
           }
         }
@@ -773,11 +760,11 @@ export async function generateFromDrawing(
     throw new Error('No se pudo extraer la imagen de la respuesta');
     
   } catch (error) {
-    geminiLogger.error('❌ Error generando desde dibujo:', error);
+    console.error('❌ Error generando desde dibujo:', error);
     
     // Intentar con el método alternativo (generateImageWithAPI)
-    geminiLogger.log('🔄 Intentando método alternativo...');
-    return await generateImageWithAPISimple(
+    console.log('🔄 Intentando método alternativo...');
+    return await generateImageWithAPI(
       analysis.intent.suggested_prompt + (userPrompt ? ` ${userPrompt}` : ''),
       1024,
       1024
@@ -794,7 +781,7 @@ export async function editImageWithDrawing(
   analysis: ModificationAnalysis,
   userPrompt?: string
 ): Promise<Blob> {
-  geminiLogger.log('✏️ Editando imagen con dibujo y máscara...');
+  console.log('✏️ Editando imagen con dibujo y máscara...');
   
   try {
     const ai = initializeGemini();
@@ -822,7 +809,7 @@ ${analysis.prompt.negative_prompt ? `Evitar: ${analysis.prompt.negative_prompt}`
 La máscara indica las áreas a modificar (blanco = modificar, negro = preservar).
 Mantén la coherencia visual con el resto de la imagen.`;
 
-    geminiLogger.log('📝 Prompt de edición:', fullPrompt);
+    console.log('📝 Prompt de edición:', fullPrompt);
     
     // Preparar imágenes
     const baseBase64 = await blobToBase64(baseBlob);
@@ -858,7 +845,7 @@ Mantén la coherencia visual con el resto de la imagen.`;
             const mimeType = part.inlineData.mimeType || 'image/png';
             const imageBlob = base64ToBlob(imageData, mimeType);
             
-            geminiLogger.log('✅ Imagen editada con éxito:', imageBlob.size, 'bytes');
+            console.log('✅ Imagen editada con éxito:', imageBlob.size, 'bytes');
             return imageBlob;
           }
         }
@@ -868,11 +855,11 @@ Mantén la coherencia visual con el resto de la imagen.`;
     throw new Error('No se pudo extraer la imagen editada');
     
   } catch (error) {
-    geminiLogger.error('❌ Error editando imagen:', error);
+    console.error('❌ Error editando imagen:', error);
     
     // Fallback: intentar generación simple con el prompt
-    geminiLogger.log('🔄 Intentando generación alternativa...');
-    return await generateImageWithAPISimple(
+    console.log('🔄 Intentando generación alternativa...');
+    return await generateImageWithAPI(
       analysis.prompt.edit_prompt + (userPrompt ? ` ${userPrompt}` : ''),
       1024,
       1024
@@ -888,7 +875,7 @@ export async function generateSmartMask(
   canvasHeight: number,
   analysis: ModificationAnalysis
 ): Promise<Blob> {
-  geminiLogger.log('🎭 Generando máscara inteligente...');
+  console.log('🎭 Generando máscara inteligente...');
   
   return new Promise((resolve) => {
     const canvas = document.createElement('canvas');
@@ -958,7 +945,7 @@ export async function generateSmartMask(
     ctx.drawImage(canvas, 0, 0);
     
     canvas.toBlob((blob) => {
-      geminiLogger.log('✅ Máscara generada:', blob?.size, 'bytes');
+      console.log('✅ Máscara generada:', blob?.size, 'bytes');
       resolve(blob!);
     }, 'image/png');
   });
@@ -981,14 +968,14 @@ export async function composeMultipleImages(
     preserve_consistency?: boolean;
   }
 ): Promise<Blob> {
-  geminiLogger.log('🎨 Componiendo múltiples imágenes con Nano Banana...');
+  console.log('🎨 Componiendo múltiples imágenes con Nano Banana...');
   
   if (references.length === 0) {
     throw new Error('Se necesita al menos una imagen de referencia');
   }
   
   if (references.length > 3) {
-    geminiLogger.warn('⚠️ Nano Banana soporta máximo 3 imágenes, usando las primeras 3');
+    console.warn('⚠️ Nano Banana soporta máximo 3 imágenes, usando las primeras 3');
     references = references.slice(0, 3);
   }
   
@@ -1037,7 +1024,7 @@ Instrucciones de composición:
 - Mantén la calidad y resolución alta
 - Respeta los pesos de importancia de cada imagen`;
 
-    geminiLogger.log('📝 Prompt de composición:', compositionPrompt);
+    console.log('📝 Prompt de composición:', compositionPrompt);
     
     // Llamar a Nano Banana con múltiples referencias
     const contentParts = [
@@ -1059,7 +1046,7 @@ Instrucciones de composición:
             const mimeType = part.inlineData.mimeType || 'image/png';
             const imageBlob = base64ToBlob(imageData, mimeType);
             
-            geminiLogger.log('✅ Composición múltiple generada:', imageBlob.size, 'bytes');
+            console.log('✅ Composición múltiple generada:', imageBlob.size, 'bytes');
             return imageBlob;
           }
         }
@@ -1069,7 +1056,7 @@ Instrucciones de composición:
     throw new Error('No se pudo extraer la imagen compuesta');
     
   } catch (error) {
-    geminiLogger.error('❌ Error en composición múltiple:', error);
+    console.error('❌ Error en composición múltiple:', error);
     throw error;
   }
 }
@@ -1090,7 +1077,7 @@ export async function optimizePromptForNanoBanana(
     technical_details?: boolean;
   } = {}
 ): Promise<string> {
-  geminiLogger.log('🔧 Optimizando prompt para Nano Banana...');
+  console.log('🔧 Optimizando prompt para Nano Banana...');
   
   try {
     const ai = initializeGemini();
@@ -1170,11 +1157,11 @@ Devuelve SOLO el prompt mejorado, sin explicaciones:
       refinedPrompt += `\n\nEvitar: ${options.negative.join(', ')}`;
     }
     
-    geminiLogger.log('✅ Prompt optimizado:', refinedPrompt);
+    console.log('✅ Prompt optimizado:', refinedPrompt);
     return refinedPrompt;
     
   } catch (error) {
-    geminiLogger.error('❌ Error optimizando prompt:', error);
+    console.error('❌ Error optimizando prompt:', error);
     // Devolver el prompt base con mejoras básicas
     return `${basePrompt}, high quality, detailed`;
   }
@@ -1195,7 +1182,7 @@ export async function smartGenerate(
   userPrompt?: string,
   options?: any
 ): Promise<Blob> {
-  geminiLogger.log('🤖 Generación inteligente automática...');
+  console.log('🤖 Generación inteligente automática...');
   
   try {
     // Analizar qué tenemos en el canvas
@@ -1207,7 +1194,7 @@ export async function smartGenerate(
     // Decidir modo de operación
     if (!hasBase && hasDrawing) {
       // CASO 1: Solo dibujo - Generar desde sketch
-      geminiLogger.log('📝 Modo: Generación desde dibujo');
+      console.log('📝 Modo: Generación desde dibujo');
       
       const analysis = await analyzeDrawing(canvasExport.drawingLayer!);
       
@@ -1228,7 +1215,7 @@ export async function smartGenerate(
       
     } else if (hasBase && (hasDrawing || hasMask)) {
       // CASO 2: Imagen base con modificaciones - Editar
-      geminiLogger.log('✏️ Modo: Edición de imagen existente');
+      console.log('✏️ Modo: Edición de imagen existente');
       
       // Crear imagen con modificaciones si no existe fullImage
       const modifiedImage = canvasExport.fullImage || canvasExport.baseImage!;
@@ -1260,7 +1247,7 @@ export async function smartGenerate(
       
     } else if (hasBase && !hasDrawing && !hasMask) {
       // CASO 3: Solo imagen base - Mejorar/Reimaginar
-      geminiLogger.log('✨ Modo: Mejora de imagen');
+      console.log('✨ Modo: Mejora de imagen');
       
       const prompt = userPrompt || 'Mejora esta imagen, hazla más detallada y profesional';
       const optimizedPrompt = await optimizePromptForNanoBanana(prompt, {
@@ -1301,14 +1288,14 @@ export async function smartGenerate(
       
     } else if (userPrompt && !hasBase && !hasDrawing) {
       // CASO 4: Solo prompt - Generación pura
-      geminiLogger.log('💭 Modo: Generación desde prompt');
+      console.log('💭 Modo: Generación desde prompt');
       
       const optimizedPrompt = await optimizePromptForNanoBanana(userPrompt, {
         quality: 'high',
         technical_details: true
       });
       
-      return await generateImageWithAPISimple(optimizedPrompt, 1024, 1024);
+      return await generateImageWithAPI(optimizedPrompt, 1024, 1024);
       
     } else {
       // CASO 5: Canvas vacío sin prompt
@@ -1316,7 +1303,7 @@ export async function smartGenerate(
     }
     
   } catch (error) {
-    geminiLogger.error('❌ Error en generación inteligente:', error);
+    console.error('❌ Error en generación inteligente:', error);
     throw error;
   }
 }
@@ -1327,7 +1314,7 @@ export async function smartGenerate(
 export async function analyzeCanvasContext(
   canvasState: any
 ): Promise<ContextualAnalysis> {
-  geminiLogger.log('🔍 Analizando contexto del canvas...');
+  console.log('🔍 Analizando contexto del canvas...');
   
   // Análisis básico del estado del canvas
   const hasBaseImage = canvasState.hasBaseImage || false;
