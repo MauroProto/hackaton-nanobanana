@@ -4,6 +4,7 @@ import { GeminiImageRequest, GeminiImageResponse } from '../types';
 import { config } from './config';
 import { geminiLogger } from './logger';
 import { sanitizePrompt } from './security';
+import * as fabric from 'fabric';
 
 // Interfaces para análisis inteligente
 export interface DrawingAnalysis {
@@ -72,7 +73,7 @@ export interface ContextualAnalysis {
     dominant_content: 'empty' | 'drawing' | 'image' | 'mixed';
   };
   user_intent: {
-    action: 'create' | 'edit' | 'enhance' | 'combine';
+    action: 'generate' | 'create' | 'edit' | 'enhance' | 'combine';
     confidence: number;
     reasoning: string;
   };
@@ -419,26 +420,88 @@ export function cleanup(): void {
   genAI = null;
 }
 
-// Función para convertir canvas de Fabric.js a Blob
-export async function canvasToBlob(canvas: any): Promise<Blob | null> {
+// Función auxiliar para filtrar solo objetos de dibujo (NO imágenes)
+export function filterDrawingObjects(objects: fabric.Object[]): fabric.Object[] {
+  return objects.filter(obj => {
+    return obj.type === 'path' || obj.type === 'rect' || obj.type === 'circle' || 
+           obj.type === 'triangle' || obj.type === 'text' || obj.type === 'textbox' ||
+           obj.type === 'line' || obj.type === 'polyline' || obj.type === 'polygon';
+    // EXCLUIR: obj.type === 'image' (imágenes previamente generadas)
+  });
+}
+
+// Función auxiliar para crear canvas temporal solo con dibujos
+export async function createDrawingOnlyCanvas(
+  fabricCanvas: fabric.Canvas, 
+  drawingObjects: fabric.Object[]
+): Promise<Blob> {
+  const tempCanvas = document.createElement('canvas');
+  tempCanvas.width = fabricCanvas.width || 800;
+  tempCanvas.height = fabricCanvas.height || 600;
+  const tempFabric = new fabric.Canvas(tempCanvas, {
+    backgroundColor: '#ffffff'
+  });
+  
+  // Clonar solo los objetos de dibujo
+  for (const obj of drawingObjects) {
+    const cloned = await new Promise<fabric.Object>((resolve) => {
+      obj.clone().then(resolve);
+    });
+    tempFabric.add(cloned);
+  }
+  
+  tempFabric.requestRenderAll();
+  await new Promise(resolve => setTimeout(resolve, 100));
+  
+  // Convertir a blob
+  const blob = await new Promise<Blob>((resolve) => {
+    tempCanvas.toBlob((b) => {
+      resolve(b!);
+      tempFabric.dispose(); // Limpiar canvas temporal
+    }, 'image/png');
+  });
+  
+  return blob;
+}
+
+// Función para convertir canvas de Fabric.js a Blob - SOLO DIBUJOS
+export async function canvasToBlob(canvas: any, onlyDrawings: boolean = true): Promise<Blob | null> {
   if (!canvas) return null;
   
   try {
-    geminiLogger.log('Converting canvas to blob...');
+    geminiLogger.log('Converting canvas to blob...', { onlyDrawings });
     
-    // Para Fabric.js v6, usar toDataURL y luego convertir a Blob
-    if (canvas.toDataURL) {
-      const dataUrl = canvas.toDataURL({
-        format: 'png',
-        quality: 1,
-        multiplier: 1
-      });
-      
-      // Convertir dataURL a Blob
-      const response = await fetch(dataUrl);
-      const blob = await response.blob();
-      geminiLogger.log('Canvas converted to blob successfully:', blob.size, 'bytes');
-      return blob;
+    // Para Fabric.js v6
+    if (canvas.toDataURL && canvas.getObjects) {
+      if (onlyDrawings) {
+        // Usar función auxiliar para filtrar objetos de dibujo
+        const allObjects = canvas.getObjects();
+        const drawingObjects = filterDrawingObjects(allObjects);
+        
+        geminiLogger.log(`📊 Objetos totales: ${allObjects.length}, Solo dibujos: ${drawingObjects.length}`);
+        
+        if (drawingObjects.length === 0) {
+          geminiLogger.log('ℹ️ No hay dibujos del usuario para capturar');
+          return null;
+        }
+        
+        // Usar función auxiliar para crear canvas temporal
+        const blob = await createDrawingOnlyCanvas(canvas, drawingObjects);
+        geminiLogger.log('✅ Canvas (solo dibujos) converted to blob:', blob.size, 'bytes');
+        return blob;
+      } else {
+        // Comportamiento original - todo el canvas
+        const dataUrl = canvas.toDataURL({
+          format: 'png',
+          quality: 1,
+          multiplier: 1
+        });
+        
+        const response = await fetch(dataUrl);
+        const blob = await response.blob();
+        geminiLogger.log('Canvas (completo) converted to blob successfully:', blob.size, 'bytes');
+        return blob;
+      }
     }
     
     // Si es un HTMLCanvasElement normal
@@ -1042,7 +1105,7 @@ Instrucciones de composición:
     // Llamar a Nano Banana con múltiples referencias
     const contentParts = [
       compositionPrompt,
-      ...imageParts.map(part => part.inlineData)
+      ...imageParts
     ];
     
     const result = await model.generateContent(contentParts);
@@ -1347,13 +1410,13 @@ export async function analyzeCanvasContext(
   }
   
   // Inferir intención del usuario
-  let userAction: 'create' | 'edit' | 'enhance' | 'combine' = 'create';
+  let userAction: 'generate' | 'edit' | 'enhance' | 'create' | 'combine' = 'create';
   let confidence = 0.8;
   let reasoning = '';
   
   if (dominantContent === 'empty') {
-    userAction = 'create';
-    reasoning = 'Canvas vacío, listo para crear';
+    userAction = 'generate';
+    reasoning = 'Canvas vacío, listo para generar';
   } else if (dominantContent === 'drawing') {
     userAction = 'create';
     reasoning = 'Solo hay dibujos, generar imagen desde sketch';
@@ -1361,8 +1424,13 @@ export async function analyzeCanvasContext(
     userAction = 'enhance';
     reasoning = 'Imagen sin modificaciones, posible mejora';
   } else if (dominantContent === 'mixed') {
-    userAction = 'edit';
-    reasoning = 'Imagen con dibujos encima, edición localizada';
+    if (layerCount > 2) {
+      userAction = 'combine';
+      reasoning = 'Múltiples capas detectadas, combinar elementos';
+    } else {
+      userAction = 'edit';
+      reasoning = 'Imagen con dibujos encima, edición localizada';
+    }
   }
   
   // Sugerir siguiente paso
@@ -1386,6 +1454,10 @@ export async function analyzeCanvasContext(
     case 'combine':
       nextStep = 'Fusiona elementos y genera resultado final';
       toolsNeeded = ['generar', 'capas'];
+      break;
+    case 'generate':
+      nextStep = 'Genera una nueva imagen desde cero';
+      toolsNeeded = ['prompt', 'generar'];
       break;
   }
   

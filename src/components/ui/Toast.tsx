@@ -74,7 +74,7 @@ const Toast: React.FC<ToastProps> = ({
       case 'loading':
         return <Loader2 className="h-5 w-5 text-blue-500 animate-spin" />;
       case 'ai':
-        return <Brain className="h-5 w-5 text-purple-500" />;
+        return <Brain className="h-5 w-5 text-blue-500" />;
       default:
         return null;
     }
@@ -93,7 +93,7 @@ const Toast: React.FC<ToastProps> = ({
       warning: 'border-yellow-200',
       info: 'border-blue-200',
       loading: 'border-blue-200',
-      ai: 'border-purple-200'
+      ai: 'border-blue-200'
     }[type];
     
     return `${baseStyles} ${visibilityStyles} ${borderStyles}`;
@@ -106,7 +106,7 @@ const Toast: React.FC<ToastProps> = ({
       warning: 'bg-yellow-500',
       info: 'bg-blue-500',
       loading: 'bg-blue-500',
-      ai: 'bg-gradient-to-r from-purple-500 to-blue-500'
+      ai: 'bg-gradient-to-r from-blue-500 to-indigo-500'
     };
     return colors[type];
   };

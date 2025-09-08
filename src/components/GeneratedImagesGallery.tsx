@@ -160,7 +160,7 @@ const GeneratedImagesGallery: React.FC = () => {
         
         {generatedImages.length === 0 ? (
           <p className="text-sm text-gray-500 text-center py-8">
-            No hay imágenes generadas aún. Usa el botón "🍌 Generar con Nano Banana" para crear una.
+            No hay imágenes generadas aún. Usa el botón "Generar con Nano Banana" para crear una.
           </p>
         ) : (
           <div className="flex gap-4 overflow-x-auto pb-2">
@@ -170,7 +170,7 @@ const GeneratedImagesGallery: React.FC = () => {
                 className="flex-shrink-0 group relative"
               >
                 {/* Imagen principal */}
-                <div className={`relative ${selectedImage === index ? 'ring-2 ring-purple-500 rounded-lg' : ''}`}>
+                <div className={`relative ${selectedImage === index ? 'ring-2 ring-blue-500 rounded-lg' : ''}`}>
                   <img
                     src={image.url}
                     alt={`Generada ${index + 1}`}

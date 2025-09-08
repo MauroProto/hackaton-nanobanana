@@ -64,7 +64,7 @@ const LayerItem: React.FC<LayerItemProps> = ({
   return (
     <div className={`
       group relative border rounded-lg p-2 mb-2 transition-all
-      ${isActive ? 'border-purple-400 bg-purple-50' : 'border-gray-200 hover:border-gray-300'}
+      ${isActive ? 'border-blue-400 bg-blue-50' : 'border-gray-200 hover:border-gray-300'}
     `}>
       <div className="flex items-center space-x-2">
         {/* Visibility Toggle */}
@@ -89,7 +89,7 @@ const LayerItem: React.FC<LayerItemProps> = ({
             layer.type === 'drawing' ? 'bg-blue-100' :
             layer.type === 'text' ? 'bg-green-100' :
             layer.type === 'filter' ? 'bg-yellow-100' :
-            layer.type === 'adjustment' ? 'bg-purple-100' :
+            layer.type === 'adjustment' ? 'bg-blue-100' :
             'bg-gray-100'
           }`}>
             {getLayerIcon()}
@@ -267,7 +267,7 @@ export const LayersPanel: React.FC = () => {
       {/* Header */}
       <div className="px-4 py-3 border-b flex items-center justify-between">
         <div className="flex items-center space-x-2">
-          <Layers className="h-4 w-4 text-purple-600" />
+          <Layers className="h-4 w-4 text-blue-600" />
           <h3 className="text-sm font-semibold text-gray-900">
             Capas de Modificación
           </h3>

@@ -10,7 +10,8 @@ import {
 } from 'tldraw';
 import 'tldraw/tldraw.css';
 import { generateImageWithAPI } from './lib/gemini-image';
-import { generateWithGeminiReal } from './lib/gemini-real-generator';
+import { generateWithGeminiReal, applyChangesFromReference } from './lib/gemini-real-generator';
+import { simpleGenerate, generateWithImageModel } from './lib/simple-generator';
 import { createCanvasOrchestrator } from './lib/canvas-orchestrator';
 import { sanitizePrompt } from './lib/security';
 import { logger } from './lib/logger';
@@ -39,52 +40,24 @@ import {
 
 export default function AppTldraw() {
   const [prompt, setPrompt] = useState('');
-  const [negativePrompt, setNegativePrompt] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
+  const [selectedStyles, setSelectedStyles] = useState<string[]>(['realistic']);
   const [generatedImages, setGeneratedImages] = useState<string[]>([]);
-  const [aspectRatio, setAspectRatio] = useState<'1:1' | '16:9' | '9:16' | '4:3' | '3:4'>('1:1');
-  const [quality, setQuality] = useState<'fast' | 'balanced' | 'high'>('balanced');
-  const [seed, setSeed] = useState<number | undefined>();
-  const [selectedStyles, setSelectedStyles] = useState<string[]>([]);
-  const [lastGeneratedImage, setLastGeneratedImage] = useState<string | null>(null);
-  const [lastGeneratedImageId, setLastGeneratedImageId] = useState<string | null>(null);
-  // DEPRECATED: Now using real-time selection instead of cached state
+  const editorRef = useRef<Editor | null>(null);
   const [selectedImageForEdit, setSelectedImageForEdit] = useState<{id: string, url: string} | null>(null);
   const [selectedShapesForMerge, setSelectedShapesForMerge] = useState<string[]>([]);
-  const editorRef = useRef<Editor | null>(null);
 
-  // Handle editor mount
+  // Initialize editor when component mounts
   const handleMount = useCallback((editor: Editor) => {
     editorRef.current = editor;
     
-    // Set initial viewport
-    editor.setCurrentTool('draw');
-    
-    // Set canvas background
-    editor.updateInstanceState({ 
-      isDebugMode: false,
-      isFocusMode: false 
-    });
-    
-    // Listen for shape deletions to clear edit state
-    editor.sideEffects.registerAfterDeleteHandler('shape', (shape) => {
-      // Clean up deprecated state if shape is deleted
-      setSelectedImageForEdit(prev => {
-        if (shape.id === prev?.id) {
-          console.log('🗑️ Imagen seleccionada eliminada');
-          return null;
-        }
-        return prev;
-      });
-    });
-    
-    // Listen for selection changes
+    // Listen for selection changes to detect image selection
     editor.sideEffects.registerAfterChangeHandler('instance_page_state', (prev, next) => {
       const selectedShapes = editor.getSelectedShapes();
       
       if (selectedShapes.length === 1) {
         const shape = selectedShapes[0];
-        console.log('🔍 Shape seleccionado:', shape.type, shape.id);
+        // Verificando shape seleccionado
         
         // IMPORTANT: Only set selectedImageForEdit if it's truly an image
         if (shape.type === 'image') {
@@ -93,18 +66,17 @@ export default function AppTldraw() {
           // Verify the shape still exists in the store
           const shapeStillExists = editor.getShape(shape.id);
           if (!shapeStillExists) {
-            console.log('⚠️ Shape ya no existe en el store');
+            // Shape no existe en el store
             setSelectedImageForEdit(null);
             return;
           }
           
           if (imageShape.props.assetId) {
             const asset = editor.getAsset(imageShape.props.assetId as TLAssetId);
-            console.log('📦 Asset encontrado:', asset?.type, asset?.props?.src?.substring(0, 30));
+            // Asset encontrado
             
             if (asset && asset.type === 'image' && asset.props.src) {
-              console.log('📸 Imagen seleccionada para edición:', shape.id);
-              console.log('📊 Asset URL tipo:', asset.props.src.substring(0, 50));
+              // Imagen seleccionada para edición
               
               // Store both the shape ID and the asset URL
               setSelectedImageForEdit({
@@ -112,7 +84,7 @@ export default function AppTldraw() {
                 url: asset.props.src
               });
             } else {
-              console.log('⚠️ Asset sin src válido, pero usando shape ID');
+              // Asset sin src válido, usando shape ID
               // Still allow selection with asset URL
               setSelectedImageForEdit({
                 id: shape.id,
@@ -120,75 +92,109 @@ export default function AppTldraw() {
               });
             }
           } else {
-            console.log('⚠️ Image shape sin assetId - no seleccionando');
+            // Image shape sin assetId
             setSelectedImageForEdit(null);
           }
         } else {
           // Not an image - clear selection immediately
-          console.log('📝 Shape no es imagen:', shape.type);
+          // Shape no es imagen
           setSelectedImageForEdit(null);
         }
       } else if (selectedShapes.length === 0) {
         // No selection - clear
         if (selectedImageForEdit) {
-          console.log('❌ Sin selección - limpiando');
+          // Sin selección - limpiando
           setSelectedImageForEdit(null);
         }
         setSelectedShapesForMerge([]);
       } else if (selectedShapes.length === 2) {
         // Exactly 2 shapes selected - enable merge
-        console.log('🔀 2 shapes seleccionados para fusión');
-        console.log('📊 Shapes:', selectedShapes.map(s => ({
-          id: s.id,
-          type: s.type
-        })));
+        // 2 shapes seleccionados para fusión
         setSelectedShapesForMerge(selectedShapes.map(s => s.id));
         setSelectedImageForEdit(null);
         
         // Visual feedback
-        console.log('✨ Merge mode activated! Click "Merge Selected" button to combine.');
+        // Merge mode activated
       } else {
         // More than 2 shapes - clear  
         if (selectedImageForEdit) {
-          console.log('❌ Múltiple selección - limpiando');
+          // Múltiple selección - limpiando
           setSelectedImageForEdit(null);
         }
         setSelectedShapesForMerge([]);
       }
     });
-  }, []);
+  }, [selectedImageForEdit]);
 
   // Generate image from canvas content - SIMPLIFIED VERSION
-  const generateFromCanvas = async () => {
+  // Función de debugging para ver el estado actual
+  const debugCanvasState = () => {
     if (!editorRef.current) return;
+    
+    const editor = editorRef.current;
+    const allShapes = Array.from(editor.getCurrentPageShapeIds());
+    
+    console.log('🔍 === DEBUGGING CANVAS STATE ===');
+    console.log(`Total shapes: ${allShapes.length}`);
+    console.log(`Current selection:`, editor.getSelectedShapes().length, 'shapes');
+    
+    allShapes.forEach((shapeId, index) => {
+      const shape = editor.getShape(createShapeId(shapeId));
+      if (shape) {
+        const bounds = editor.getShapePageBounds(shape);
+        console.log(`${index + 1}. ${shape.type} (${shape.id})`, {
+          bounds: bounds ? {
+            x: Math.round(bounds.x),
+            y: Math.round(bounds.y), 
+            width: Math.round(bounds.width),
+            height: Math.round(bounds.height)
+          } : 'no bounds'
+        });
+      }
+    });
+    console.log('🔍 === END DEBUGGING ===');
+  };
+
+  // Generate image from canvas - Main function with enhanced error handling
+  const generateFromCanvas = async () => {
+    if (!editorRef.current) {
+      console.error('Editor no está listo todavía. Por favor espera un momento.');
+      return;
+    }
 
     const editor = editorRef.current;
+    
     setIsGenerating(true);
 
     try {
       console.log('🚀 GENERANDO IMAGEN - USANDO SELECCIÓN');
       
-      // IMPORTANTE: Usar SOLO los shapes SELECCIONADOS
-      const selectedShapes = editor.getSelectedShapes();
+      // Check if we have any shapes to work with
+      const allShapeIds = Array.from(editor.getCurrentPageShapeIds());
       let validShapeIds: any[] = [];
-      let needsConversion = false;
       
-      if (selectedShapes.length > 0) {
-        // Si hay shapes seleccionados, usar SOLO esos
-        console.log(`✅ Usando ${selectedShapes.length} shapes SELECCIONADOS`);
-        console.log('📊 Shapes seleccionados:', selectedShapes);
-        // Los IDs ya son TLShapeId válidos, no necesitan conversión
-        validShapeIds = selectedShapes.map(shape => shape.id);
-        needsConversion = false;
+      if (allShapeIds.length === 0) {
+        // Generando desde selección actual
+        console.error('No hay nada en el canvas para generar. Dibuja algo primero.');
+        setIsGenerating(false);
+        return;
+      }
+      
+      const selectedShapeIds = editor.getSelectedShapeIds();
+      
+      if (selectedShapeIds.size > 0) {
+        console.log(`✅ Usando ${selectedShapeIds.size} shapes SELECCIONADOS`);
+        console.log('📊 Shapes seleccionados:', selectedShapeIds);
+        
+        validShapeIds = Array.from(selectedShapeIds);
       } else {
-        // Si no hay selección, usar TODO el canvas
         console.log('⚠️ No hay selección - usando todo el canvas');
-        const allShapeIds = Array.from(editor.getCurrentPageShapeIds());
+        
         console.log(`📊 Total shapes en canvas: ${allShapeIds.length}`);
         
         if (allShapeIds.length === 0) {
           console.log('❌ Canvas vacío');
-          alert('No hay nada para generar. Por favor dibuja algo o selecciona elementos del canvas.');
+          console.error('El canvas está vacío. Dibuja algo para generar una imagen.');
           setIsGenerating(false);
           return;
         }
@@ -201,25 +207,23 @@ export default function AppTldraw() {
             console.error('Error creando shape ID:', id, e);
             return null;
           }
-        }).filter(id => id !== null);
-        needsConversion = false; // Ya los convertimos
+        }).filter(Boolean);
       }
       
       console.log(`✅ Exportando ${validShapeIds.length} shapes válidos`);
       console.log('🎨 Shape IDs a exportar:', validShapeIds);
       
-      // Verificar que el editor esté disponible
-      if (!editor) {
+      // Verify editor is still available
+      if (!editorRef.current) {
         console.error('❌ Editor no disponible');
-        alert('Error: El editor no está listo. Intenta de nuevo.');
+        console.error('Editor no disponible. Recarga la página.');
         setIsGenerating(false);
         return;
       }
       
-      // Verificar que tenemos shapes válidos
       if (validShapeIds.length === 0) {
         console.error('❌ No hay shapes válidos para exportar');
-        alert('No hay contenido válido para exportar. Dibuja algo primero.');
+        console.error('No hay elementos válidos para exportar. Asegúrate de tener algo dibujado.');
         setIsGenerating(false);
         return;
       }
@@ -227,118 +231,153 @@ export default function AppTldraw() {
       // Export usando el método correcto
       let blob: Blob;
       try {
-        // Usar el método correcto del editor
+        console.log('📊 Intentando exportar SVG con IDs:', validShapeIds);
+        
         const svg = await editor.getSvgString(validShapeIds, {
           scale: 1,
-          background: true,
-          padding: 20,
+          background: false,
+          padding: 0,
           darkMode: false,
-          preserveAspectRatio: 'xMidYMid meet'
         });
         
         if (!svg) {
-          throw new Error('No se pudo obtener SVG del canvas');
+          throw new Error('No se pudo generar SVG');
         }
         
-        // Convertir SVG a blob PNG
-        const img = new Image();
+        console.log('📊 SVG obtenido:', svg ? 'OK' : 'NULL');
+        
+        if (!svg.svg) {
+          throw new Error('SVG vacío');
+        }
+        
+        console.log('📊 SVG string longitud:', svg.svg.length);
+        console.log('📊 SVG width:', svg.width, 'height:', svg.height);
+        
+        // Convert SVG to blob
         const canvas = document.createElement('canvas');
-        const ctx = canvas.getContext('2d');
-        
-        await new Promise((resolve, reject) => {
-          img.onload = resolve;
-          img.onerror = reject;
-          const svgBlob = new Blob([svg.svg], { type: 'image/svg+xml' });
-          img.src = URL.createObjectURL(svgBlob);
-        });
-        
-        canvas.width = img.width || 800;
-        canvas.height = img.height || 600;
-        ctx?.drawImage(img, 0, 0);
-        
-        blob = await new Promise((resolve) => {
-          canvas.toBlob(
-            (b) => resolve(b!),
-            'image/png',
-            1.0
-          );
-        });
-        
-        console.log('✅ Canvas exportado exitosamente');
-      } catch (exportError) {
-        console.error('❌ Error exportando canvas:', exportError);
-        alert('Error al exportar el canvas. Por favor intenta de nuevo o refresca la página.');
-        setIsGenerating(false);
-        return;
-      }
-
-      console.log('📏 Tamaño del blob:', blob.size, 'bytes');
-      
-      // Check if blob is too large (>10MB)
-      if (blob.size > 10 * 1024 * 1024) {
-        console.warn('⚠️ Imagen muy grande, comprimiendo...');
-        // Create canvas to resize image
+        const ctx = canvas.getContext('2d')!;
         const img = new Image();
-        const canvas = document.createElement('canvas');
-        const ctx = canvas.getContext('2d');
         
-        const url = URL.createObjectURL(blob);
-        await new Promise((resolve, reject) => {
-          img.onload = resolve;
-          img.onerror = reject;
+        await new Promise<void>((resolve, reject) => {
+          img.onload = () => {
+            try {
+              canvas.width = img.width || 800;
+              canvas.height = img.height || 600;
+              
+              // Fill with white background
+              ctx.fillStyle = 'white';
+              ctx.fillRect(0, 0, canvas.width, canvas.height);
+              
+              ctx.drawImage(img, 0, 0);
+              console.log('✅ Imagen cargada desde SVG');
+              resolve();
+            } catch (e) {
+              console.error('❌ Error cargando imagen desde SVG:', e);
+              reject(e);
+            }
+          };
+          
+          img.onerror = (e) => {
+            console.error('❌ Error cargando imagen:', e);
+            reject(new Error('Failed to load SVG as image'));
+          };
+          
+          const svgBlob = new Blob([svg.svg], { type: 'image/svg+xml;charset=utf-8' });
+          const url = URL.createObjectURL(svgBlob);
           img.src = url;
         });
         
-        // Resize to max 1920px maintaining aspect ratio
-        const maxSize = 1920;
-        let width = img.width;
-        let height = img.height;
+        console.log('📐 Canvas dimensions:', canvas.width, 'x', canvas.height);
         
-        if (width > maxSize || height > maxSize) {
-          if (width > height) {
-            height = (height * maxSize) / width;
-            width = maxSize;
-          } else {
-            width = (width * maxSize) / height;
-            height = maxSize;
-          }
-        }
-        
-        canvas.width = width;
-        canvas.height = height;
-        ctx?.drawImage(img, 0, 0, width, height);
-        
-        // Convert to blob with compression
-        blob = await new Promise((resolve) => {
-          canvas.toBlob(
-            (b) => resolve(b!),
-            'image/jpeg',
-            0.85  // 85% quality
-          );
+        blob = await new Promise<Blob>((resolve, reject) => {
+          canvas.toBlob((result) => {
+            if (result) {
+              resolve(result);
+            } else {
+              reject(new Error('Failed to create blob from canvas'));
+            }
+          }, 'image/png', 0.9);
         });
         
-        URL.revokeObjectURL(url);
-        console.log('✅ Imagen comprimida a:', blob.size, 'bytes');
+        console.log('✅ Canvas exportado exitosamente');
+      } catch (exportError: any) {
+        console.error('❌ Error exportando canvas:', exportError);
+        console.error('📊 Detalles del error:', {
+          message: exportError?.message,
+          name: exportError?.name,
+          stack: exportError?.stack
+        });
+        
+        console.error(`Error exportando el canvas: ${exportError.message}\n\nDetalles:\n- Asegúrate de tener algo dibujado\n- Intenta seleccionar elementos específicos\n- Recarga la página si el problema persiste`);
+        setIsGenerating(false);
+        return;
       }
-
-      // Convert blob to base64
+      
+      if (!blob || blob.size === 0) {
+        console.error('Error: No se pudo generar la imagen del canvas');
+        setIsGenerating(false);
+        return;
+      }
+      
+      console.log('📏 Tamaño del blob:', blob.size, 'bytes');
+      
+      // Compress image if it's too large
+      if (blob.size > 4 * 1024 * 1024) { // 4MB
+        console.warn('⚠️ Imagen muy grande, comprimiendo...');
+        
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d')!;
+        const img = new Image();
+        
+        blob = await new Promise<Blob>((resolve, reject) => {
+          img.onload = () => {
+            const maxSize = 1024;
+            let { width, height } = img;
+            
+            if (width > height) {
+              if (width > maxSize) {
+                height = (height * maxSize) / width;
+                width = maxSize;
+              }
+            } else {
+              if (height > maxSize) {
+                width = (width * maxSize) / height;
+                height = maxSize;
+              }
+            }
+            
+            canvas.width = width;
+            canvas.height = height;
+            
+            ctx.fillStyle = 'white';
+            ctx.fillRect(0, 0, width, height);
+            ctx.drawImage(img, 0, 0, width, height);
+            
+            canvas.toBlob((compressedBlob) => {
+              if (compressedBlob) {
+                console.log('✅ Imagen comprimida a:', compressedBlob.size, 'bytes');
+                resolve(compressedBlob);
+              } else {
+                reject(new Error('Error comprimiendo imagen'));
+              }
+            }, 'image/jpeg', 0.8);
+          };
+          
+          img.src = URL.createObjectURL(blob);
+        });
+      }
+      
       const reader = new FileReader();
       reader.onloadend = async () => {
-        const base64 = reader.result?.toString().split(',')[1];
-        if (!base64) {
-          console.error('Failed to convert canvas to base64');
-          setIsGenerating(false);
-          return;
-        }
-        
+        const base64 = reader.result as string;
         console.log('📊 Base64 generado, longitud:', base64.length);
 
         try {
           console.log('📤 Calling generateFromCanvas...');
           console.log('📊 Parameters:', {
             base64Length: base64.length,
-            prompt: prompt || 'default',
-            styles: selectedStyles
+            promptLength: prompt.length,
+            stylesCount: selectedStyles.length
           });
           
           let response: any;
@@ -346,7 +385,7 @@ export default function AppTldraw() {
           try {
             // Check CURRENT selection at generation time
             const currentSelection = editor.getSelectedShapes();
-            console.log('🔍 Selección ACTUAL al generar:', currentSelection.length, 'shapes');
+            // Generando desde selección actual
             
             // Find if there's an image in current selection
             const selectedImage = currentSelection.find(shape => shape.type === 'image') as TLImageShape | undefined;
@@ -354,21 +393,46 @@ export default function AppTldraw() {
             if (selectedImage) {
               console.log('🎨 MODO EDICIÓN MEJORADO - Imagen EN SELECCIÓN ACTUAL');
               console.log('📊 Imagen seleccionada ID:', selectedImage.id);
-              console.log('✏️ Detectando dibujos sobre la imagen...');
+              // Detectando dibujos sobre la imagen
               
-              // PASO 1: Usar la imagen ACTUALMENTE seleccionada
-              const imageShape = selectedImage;
+              // PASO 1: Detectar imagen seleccionada o cualquier imagen
+              // Iniciando detección de imagen y dibujos
+              
+              let imageShape = selectedImage;
+              
+              // Si no hay imagen seleccionada, buscar cualquier imagen en el canvas
               if (!imageShape) {
-                console.error('❌ No hay imagen en la selección actual');
-                alert('Por favor selecciona una imagen para editar.');
+                console.log('⚠️ No hay imagen seleccionada, buscando cualquier imagen...');
+                const allShapes = Array.from(editor.getCurrentPageShapeIds());
+                
+                for (const shapeId of allShapes) {
+                  const shape = editor.getShape(createShapeId(shapeId));
+                  if (shape && shape.type === 'image') {
+                    imageShape = shape;
+                    console.log('✅ Encontrada imagen automáticamente:', shape.id);
+                    break;
+                  }
+                }
+              }
+              
+              if (!imageShape) {
+                console.error('❌ No hay ninguna imagen en el canvas');
+                console.error('No hay imágenes en el canvas.\n\nGenera una imagen primero, luego dibuja sobre ella.');
                 setIsGenerating(false);
                 return;
               }
+              
+              console.log('✅ Imagen a usar:', {
+                id: imageShape.id,
+                type: imageShape.type,
+                isSelected: imageShape === selectedImage
+              });
               
               // PASO 2: Obtener los bounds de la imagen
               const imageBounds = editor.getShapePageBounds(imageShape);
               if (!imageBounds) {
                 console.error('❌ No se pudieron obtener bounds de la imagen');
+                console.error('Error: No se pudo obtener la información de la imagen seleccionada.');
                 setIsGenerating(false);
                 return;
               }
@@ -380,99 +444,75 @@ export default function AppTldraw() {
                 height: imageBounds.height
               });
               
-              // PASO 3: Encontrar SOLO los dibujos que están SOBRE la imagen
+              // PASO 3: Detectar dibujos de forma simple y efectiva
               const allShapes = Array.from(editor.getCurrentPageShapeIds());
               const drawingsOverImage = [];
               
+              // Buscar todos los shapes que no sean la imagen base
               for (const shapeId of allShapes) {
                 const shape = editor.getShape(createShapeId(shapeId));
-                if (!shape || shape.id === imageShape.id) continue;
+                if (!shape) continue;
                 
-                // Solo considerar shapes de dibujo (no otras imágenes)
-                if (shape.type === 'draw' || shape.type === 'line' || shape.type === 'arrow' || 
-                    shape.type === 'text' || shape.type === 'geo' || shape.type === 'highlight') {
-                  
-                  const shapeBounds = editor.getShapePageBounds(shape);
-                  if (!shapeBounds) continue;
-                  
-                  // Verificar si el dibujo está sobre la imagen (intersección)
-                  const intersects = !(
-                    shapeBounds.x > imageBounds.x + imageBounds.width ||
-                    shapeBounds.x + shapeBounds.width < imageBounds.x ||
-                    shapeBounds.y > imageBounds.y + imageBounds.height ||
-                    shapeBounds.y + shapeBounds.height < imageBounds.y
-                  );
-                  
-                  if (intersects) {
-                    drawingsOverImage.push(shape.id);
-                    console.log(`  ✅ Dibujo ${shape.type} encontrado sobre la imagen`);
-                  }
+                // Si es la imagen base, saltar
+                if (shape.id === imageShape.id) continue;
+                
+                // Cualquier shape que no sea imagen es considerado un dibujo
+                if (shape.type !== 'image' && shape.type !== 'video') {
+                  drawingsOverImage.push(shape.id);
+                  console.log(`✅ Dibujo detectado: ${shape.type}`);
                 }
               }
               
-              console.log(`🎨 Total de dibujos sobre la imagen: ${drawingsOverImage.length}`);
-              
+              // Verificar si se encontraron dibujos
               if (drawingsOverImage.length === 0) {
-                alert('No hay dibujos sobre la imagen seleccionada.\n\nDibuja algo sobre la imagen para editarla.');
-                setIsGenerating(false);
-                return;
+                console.log('⚠️ No se encontraron dibujos, usando solo la imagen');
+                // Continuar con solo la imagen - no es un error
               }
               
+              console.log(`📊 Total dibujos detectados: ${drawingsOverImage.length}`);
+              console.log(`🎨 Total de dibujos detectados: ${drawingsOverImage.length}`);
               
+              // PASO 4: Obtener la imagen base
               // Extract and validate base64 from the selected image
               let baseImageBase64: string;
               let imageUrl: string = '';
               
-              // Get the asset URL from the image shape
-              if (imageShape.props.assetId) {
-                const asset = editor.getAsset(imageShape.props.assetId as TLAssetId);
-                if (asset && asset.type === 'image' && asset.props.src) {
-                  imageUrl = asset.props.src;
-                } else {
-                  imageUrl = 'asset:' + imageShape.props.assetId;
-                }
-              }
-              
               console.log('🔍 Tipo de URL de imagen seleccionada:', {
-                url: imageUrl.substring(0, 50),
-                startsWithData: imageUrl.startsWith('data:'),
-                startsWithBlob: imageUrl.startsWith('blob:'),
-                startsWithAsset: imageUrl.startsWith('asset:'),
-                startsWithHttp: imageUrl.startsWith('http')
+                hasAssetId: !!imageShape.props.assetId,
+                startsWithData: selectedImageForEdit?.url?.startsWith('data:'),
+                startsWithAsset: selectedImageForEdit?.url?.startsWith('asset:'),
+                urlLength: selectedImageForEdit?.url?.length || 0
               });
               
-              if (imageUrl.startsWith('data:')) {
-                baseImageBase64 = imageUrl.split(',')[1];
-                console.log('✅ Imagen ya es base64, longitud:', baseImageBase64.length);
-              } else if (imageUrl.startsWith('asset:')) {
-                // Handle TLDraw asset URLs  
+              if (selectedImageForEdit?.url?.startsWith('data:image')) {
+                console.log('✅ Imagen ya es base64, longitud:', selectedImageForEdit.url.length);
+                baseImageBase64 = selectedImageForEdit.url.split(',')[1];
+              } else {
                 console.log('🎨 Manejando asset de TLDraw...');
                 console.log('📊 ID de imagen seleccionada:', imageShape.id);
                 
-                // Use the already obtained imageShape
-                const shape = imageShape;
-                
+                // Get the shape from TLDraw
+                const shape = editor.getShape(imageShape.id);
                 if (!shape || shape.type !== 'image') {
                   console.error('❌ Shape no encontrado o no es imagen:', shape);
-                  throw new Error('La imagen seleccionada ya no existe en el canvas');
+                  throw new Error('Imagen seleccionada no válida');
                 }
                 
                 console.log('✅ Shape encontrado:', shape.id, shape.type);
                 
-                // Export just this shape as an image
+                // Export this specific shape as an image
                 console.log('📸 Exportando shape como imagen...');
                 const shapeBounds = editor.getShapePageBounds(shape);
-                
                 if (!shapeBounds) {
                   console.error('❌ No se pudieron obtener bounds para shape:', shape.id);
-                  throw new Error('No se pudieron obtener los bounds del shape');
+                  throw new Error('No se pudieron obtener las dimensiones de la imagen');
                 }
                 
                 console.log('📐 Bounds del shape:', {
-                  width: shapeBounds.width,
-                  height: shapeBounds.height,
                   x: shapeBounds.x,
-                  y: shapeBounds.y
+                  y: shapeBounds.y,
+                  width: shapeBounds.width,
+                  height: shapeBounds.height
                 });
                 
                 // Export with better error handling
@@ -480,39 +520,43 @@ export default function AppTldraw() {
                 try {
                   // Usar el método correcto del editor
                   const svg = await editor.getSvgString([shape.id], {
-                    scale: 1,
+                    scale: 2,
                     background: true,
-                    padding: 0,
+                    padding: 10,
                     darkMode: false,
-                    preserveAspectRatio: 'xMidYMid meet'
                   });
                   
-                  if (!svg) {
-                    throw new Error('No se pudo obtener SVG del shape');
+                  if (!svg?.svg) {
+                    throw new Error('No se pudo exportar la imagen como SVG');
                   }
                   
-                  // Convertir SVG a blob PNG
-                  const img = new Image();
+                  // Convertir SVG a imagen
                   const canvas = document.createElement('canvas');
-                  const ctx = canvas.getContext('2d');
+                  const ctx = canvas.getContext('2d')!;
                   
-                  await new Promise((resolve, reject) => {
-                    img.onload = resolve;
+                  canvas.width = Math.round(shapeBounds.width * 2);
+                  canvas.height = Math.round(shapeBounds.height * 2);
+                  
+                  // Fondo blanco
+                  ctx.fillStyle = 'white';
+                  ctx.fillRect(0, 0, canvas.width, canvas.height);
+                  
+                  const img = new Image();
+                  await new Promise<void>((resolve, reject) => {
+                    img.onload = () => {
+                      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                      resolve();
+                    };
                     img.onerror = reject;
-                    const svgBlob = new Blob([svg.svg], { type: 'image/svg+xml' });
+                    const svgBlob = new Blob([svg.svg], { type: 'image/svg+xml;charset=utf-8' });
                     img.src = URL.createObjectURL(svgBlob);
                   });
                   
-                  canvas.width = img.width || shapeBounds.width;
-                  canvas.height = img.height || shapeBounds.height;
-                  ctx?.drawImage(img, 0, 0);
-                  
-                  blob = await new Promise((resolve) => {
-                    canvas.toBlob(
-                      (b) => resolve(b!),
-                      'image/png',
-                      1.0
-                    );
+                  blob = await new Promise<Blob>((resolve, reject) => {
+                    canvas.toBlob((result) => {
+                      if (result) resolve(result);
+                      else reject(new Error('Failed to create blob'));
+                    }, 'image/png');
                   });
                 } catch (exportError) {
                   console.error('❌ Error exportando shape:', exportError);
@@ -521,221 +565,193 @@ export default function AppTldraw() {
                 
                 console.log('📦 Blob creado, tamaño:', blob.size);
                 
-                // Convert blob to base64
-                const reader = new FileReader();
-                baseImageBase64 = await new Promise((resolve, reject) => {
+                // Comprimir si es necesario
+                if (blob.size > 3 * 1024 * 1024) { // 3MB
+                  console.log('📦 Comprimiendo imagen seleccionada...');
+                  
+                  const canvas = document.createElement('canvas');
+                  const ctx = canvas.getContext('2d')!;
+                  const img = new Image();
+                  
+                  blob = await new Promise<Blob>((resolve, reject) => {
+                    img.onload = () => {
+                      const maxSize = 1024;
+                      let { width, height } = img;
+                      
+                      if (width > height) {
+                        if (width > maxSize) {
+                          height = (height * maxSize) / width;
+                          width = maxSize;
+                        }
+                      } else {
+                        if (height > maxSize) {
+                          width = (width * maxSize) / height;
+                          height = maxSize;
+                        }
+                      }
+                      
+                      canvas.width = width;
+                      canvas.height = height;
+                      
+                      ctx.fillStyle = 'white';
+                      ctx.fillRect(0, 0, width, height);
+                      ctx.drawImage(img, 0, 0, width, height);
+                      
+                      canvas.toBlob((compressedBlob) => {
+                        if (compressedBlob) resolve(compressedBlob);
+                        else reject(new Error('Error comprimiendo'));
+                      }, 'image/jpeg', 0.8);
+                    };
+                    img.src = URL.createObjectURL(blob);
+                  });
+                }
+                
+                // Convertir a base64
+                baseImageBase64 = await new Promise<string>((resolve, reject) => {
+                  const reader = new FileReader();
                   reader.onloadend = () => {
-                    const result = reader.result?.toString().split(',')[1];
-                    if (result) {
-                      resolve(result);
-                    } else {
-                      reject(new Error('No se pudo convertir a base64'));
-                    }
+                    const result = reader.result as string;
+                    resolve(result.split(',')[1]);
                   };
                   reader.onerror = reject;
                   reader.readAsDataURL(blob);
                 });
                 
                 console.log('✅ Shape exportado como base64, longitud:', baseImageBase64.length);
-              } else {
-                // If it's a blob URL or external URL, fetch and convert
-                console.log('🔄 Convirtiendo URL a base64...');
-                const response = await fetch(imageUrl);
-                const blob = await response.blob();
-                console.log('📦 Blob obtenido:', {
-                  size: blob.size,
-                  type: blob.type
-                });
-                
-                // Check size and compress if needed
-                let finalBlob = blob;
-                if (blob.size > 5 * 1024 * 1024) { // If larger than 5MB
-                  console.log('📦 Comprimiendo imagen seleccionada...');
-                  const img = new Image();
-                  const canvas = document.createElement('canvas');
-                  const ctx = canvas.getContext('2d');
-                  
-                  const url = URL.createObjectURL(blob);
-                  await new Promise((resolve, reject) => {
-                    img.onload = resolve;
-                    img.onerror = reject;
-                    img.src = url;
-                  });
-                  
-                  // Resize to max 1280px
-                  const maxSize = 1280;
-                  let width = img.width;
-                  let height = img.height;
-                  
-                  if (width > maxSize || height > maxSize) {
-                    if (width > height) {
-                      height = (height * maxSize) / width;
-                      width = maxSize;
-                    } else {
-                      width = (width * maxSize) / height;
-                      height = maxSize;
-                    }
-                  }
-                  
-                  canvas.width = width;
-                  canvas.height = height;
-                  ctx?.drawImage(img, 0, 0, width, height);
-                  
-                  finalBlob = await new Promise((resolve) => {
-                    canvas.toBlob(
-                      (b) => resolve(b!),
-                      'image/jpeg',
-                      0.9
-                    );
-                  });
-                  
-                  URL.revokeObjectURL(url);
-                }
-                
-                // Convert to base64
-                const reader = new FileReader();
-                baseImageBase64 = await new Promise((resolve) => {
-                  reader.onloadend = () => {
-                    const result = reader.result?.toString().split(',')[1];
-                    resolve(result || '');
-                  };
-                  reader.readAsDataURL(finalBlob);
-                });
-              }
-              
-              if (!baseImageBase64) {
-                throw new Error('No se pudo procesar la imagen seleccionada - base64 vacío');
               }
               
               console.log('✅ Base64 de imagen seleccionada listo:', {
                 length: baseImageBase64.length,
-                preview: baseImageBase64.substring(0, 50)
+                prefix: baseImageBase64.substring(0, 50)
               });
               
-              // PASO 4: Crear imagen CON los dibujos visibles
+              // PASO 5: Crear imagen con sketches si hay dibujos
               console.log('🖼️ Creando imagen con dibujos para comparación...');
               
-              const withSketchesCanvas = document.createElement('canvas');
-              const withSketchesCtx = withSketchesCanvas.getContext('2d');
+              // Crear una imagen que combine la imagen base + todos los dibujos
+              const canvas = document.createElement('canvas');
+              const ctx = canvas.getContext('2d')!;
               
-              withSketchesCanvas.width = imageBounds.width;
-              withSketchesCanvas.height = imageBounds.height;
+              // Set canvas size based on image bounds
+              canvas.width = Math.max(800, Math.round(imageBounds.width + 100));
+              canvas.height = Math.max(600, Math.round(imageBounds.height + 100));
               
-              if (withSketchesCtx) {
-                // Dibujar imagen base primero
-                const baseImg = new Image();
-                await new Promise((resolve, reject) => {
-                  baseImg.onload = resolve;
-                  baseImg.onerror = reject;
-                  baseImg.src = `data:image/png;base64,${baseImageBase64}`;
-                });
-                
-                withSketchesCtx.drawImage(baseImg, 0, 0, withSketchesCanvas.width, withSketchesCanvas.height);
-                
-                // Ahora dibujar los sketches ENCIMA
+              // Fill with white background
+              ctx.fillStyle = 'white';
+              ctx.fillRect(0, 0, canvas.width, canvas.height);
+              
+              // Load and draw the base image
+              const baseImage = new Image();
+              baseImage.src = `data:image/png;base64,${baseImageBase64}`;
+              await new Promise<void>(resolve => {
+                baseImage.onload = () => {
+                  ctx.drawImage(baseImage, 50, 50, imageBounds.width, imageBounds.height);
+                  resolve();
+                };
+              });
+              
+              // Add drawings over the image if any exist
+              if (drawingsOverImage.length > 0) {
                 console.log('✏️ Agregando dibujos encima de la imagen...');
+                
                 for (const drawingId of drawingsOverImage) {
-                  const drawingShape = editor.getShape(drawingId);
+                  const drawingShape = editor.getShape(createShapeId(drawingId));
                   if (!drawingShape) continue;
                   
+                  // Get drawing bounds
                   const drawingBounds = editor.getShapePageBounds(drawingShape);
                   if (!drawingBounds) continue;
                   
-                  const drawingSvg = await editor.getSvgString([drawingId], {
-                    scale: 1,
-                    background: false,
-                    padding: 0,
-                    darkMode: false
-                  });
-                  
-                  if (!drawingSvg) continue;
-                  
-                  const drawingImg = new Image();
-                  await new Promise((resolve, reject) => {
-                    drawingImg.onload = resolve;
-                    drawingImg.onerror = reject;
-                    const svgBlob = new Blob([drawingSvg.svg], { type: 'image/svg+xml' });
-                    drawingImg.src = URL.createObjectURL(svgBlob);
-                  });
-                  
-                  const relativeX = drawingBounds.x - imageBounds.x;
-                  const relativeY = drawingBounds.y - imageBounds.y;
-                  
-                  withSketchesCtx.drawImage(
-                    drawingImg,
-                    relativeX,
-                    relativeY,
-                    drawingBounds.width,
-                    drawingBounds.height
-                  );
-                  
-                  console.log(`  📍 Dibujo agregado en: x=${relativeX}, y=${relativeY}`);
+                  // Export drawing as SVG
+                  try {
+                    const drawingSvg = await editor.getSvgString([drawingShape.id], {
+                      scale: 2,
+                      background: false,
+                      padding: 0
+                    });
+                    
+                    if (drawingSvg?.svg) {
+                      const drawingImg = new Image();
+                      await new Promise<void>(resolve => {
+                        drawingImg.onload = () => {
+                          // Calculate relative position
+                          const relativeX = drawingBounds.x - imageBounds.x + 50;
+                          const relativeY = drawingBounds.y - imageBounds.y + 50;
+                          
+                          ctx.drawImage(
+                            drawingImg,
+                            relativeX,
+                            relativeY,
+                            drawingBounds.width,
+                            drawingBounds.height
+                          );
+                          
+                          // Dibujo agregado a la composición
+                          resolve();
+                        };
+                        const svgBlob = new Blob([drawingSvg.svg], { type: 'image/svg+xml;charset=utf-8' });
+                        drawingImg.src = URL.createObjectURL(svgBlob);
+                      });
+                    }
+                  } catch (err) {
+                    console.warn('Error agregando dibujo:', err);
+                  }
                 }
               }
               
               // Convertir imagen con sketches a base64
               const withSketchesBlob = await new Promise<Blob>((resolve) => {
-                withSketchesCanvas.toBlob(
-                  (b) => resolve(b!),
-                  'image/png',
-                  1.0
-                );
+                canvas.toBlob((blob) => {
+                  resolve(blob!);
+                }, 'image/png', 0.9);
               });
               
-              const withSketchesReader = new FileReader();
-              const withSketchesBase64 = await new Promise<string>((resolve, reject) => {
-                withSketchesReader.onloadend = () => {
-                  const result = withSketchesReader.result?.toString().split(',')[1];
-                  if (result) {
-                    resolve(result);
-                  } else {
-                    reject(new Error('No se pudo convertir imagen con sketches a base64'));
-                  }
+              const withSketchesBase64 = await new Promise<string>((resolve) => {
+                const reader = new FileReader();
+                reader.onloadend = () => {
+                  const result = reader.result as string;
+                  resolve(result.split(',')[1]);
                 };
-                withSketchesReader.onerror = reject;
-                withSketchesReader.readAsDataURL(withSketchesBlob);
+                reader.readAsDataURL(withSketchesBlob);
               });
               
               console.log('✅ Imagen con sketches creada');
               
-              // Crear prompt específico
-              const editPrompt = sanitizePrompt(
-                prompt || 'Identify the hand-drawn sketches and convert them into photorealistic elements'
-              );
+              // PASO 6: Llamar a Gemini con las dos imágenes
+              const sanitizedPrompt = sanitizePrompt(prompt || 'Edit this image based on the drawings and sketches added to it. Apply the changes shown in the sketches to create a refined, professional result.');
               
               console.log('📝 Enviando DOS imágenes a Gemini...');
+              
               console.log('  1️⃣ Imagen original SIN dibujos');
               console.log('  2️⃣ Imagen CON dibujos como referencia');
               
-              // Usar nueva función que compara dos imágenes
-              const { applyChangesFromReference } = await import('./lib/gemini-real-generator');
-              
               response = await applyChangesFromReference(
-                baseImageBase64,      // IMAGEN 1: Original SIN dibujos
-                withSketchesBase64,   // IMAGEN 2: Con dibujos encima
-                editPrompt
+                baseImageBase64,
+                withSketchesBase64,
+                sanitizedPrompt
               );
               
               console.log('✅ Edición aplicada a imagen seleccionada');
               
-              // DON'T store the base image - the new edited image will be stored later
-              // when we process the response
-              
             } else {
-              // Normal generation mode
+              // MODO 2: Generación normal desde canvas/selección
               console.log('🚀 MODO GENERACIÓN: Nueva imagen desde cero');
               console.log('📝 Generando desde dibujos/selección');
               
-              const sanitizedPrompt = sanitizePrompt(prompt || 'Transform this drawing/sketch into a photorealistic, detailed image. Interpret the shapes and lines as real objects.');
+              const sanitizedPrompt = sanitizePrompt(prompt || 'Create a professional image based on this sketch or drawing. Make it realistic and detailed.');
+              
+              // Clean base64 - remove data URL prefix if present
+              const cleanBase64 = base64.includes(',') ? base64.split(',')[1] : base64;
               
               response = await generateWithGeminiReal(
-                base64,
+                cleanBase64,
                 sanitizedPrompt,
                 selectedStyles
               );
               
               console.log('✅ Generación enviada a Gemini');
             }
+          
           } catch (callError: any) {
             console.error('❌ Error completo:', callError);
             console.error('📝 Mensaje de error:', callError?.message);
@@ -751,148 +767,92 @@ export default function AppTldraw() {
             // Check for specific error types
             if (callError?.message?.includes('No hay una imagen seleccionada') || 
                 callError?.message?.includes('ya no existe en el canvas')) {
-              alert('Error: Problema con la imagen seleccionada.\n\n' +
-                    'Soluciones:\n' +
-                    '• Asegúrate de seleccionar la imagen haciendo clic en ella\n' +
-                    '• Espera a que aparezca "Imagen Seleccionada para Edición" en el panel\n' +
-                    '• Si la imagen fue eliminada, selecciona otra\n' +
-                    '• Intenta deseleccionar y volver a seleccionar la imagen\n\n' +
-                    'Error: ' + callError.message);
-              setIsGenerating(false);
-              return;
+              console.error('Error: Problema con la imagen seleccionada.\n\n' +
+                    'SOLUCIÓN:\n' +
+                    '1. Selecciona una imagen en el canvas\n' +
+                    '2. Dibuja algo sobre la imagen\n' +
+                    '3. Intenta generar de nuevo\n\n' +
+                    'O usa el modo de generación normal sin seleccionar imágenes.');
+            } else if (callError?.message?.includes('API key') || callError?.message?.includes('authentication')) {
+              console.error('Error de autenticación con Gemini API.\n\n' +
+                    'Verifica tu API key en las variables de entorno.');
+            } else if (callError?.message?.includes('quota') || callError?.message?.includes('limit')) {
+              console.error('Límite de API alcanzado.\n\n' +
+                    'Has excedido tu cuota de API de Gemini. Intenta más tarde.');
+            } else if (callError?.message?.includes('safety') || callError?.message?.includes('blocked')) {
+              console.error('Contenido bloqueado por políticas de seguridad.\n\n' +
+                    'El contenido fue rechazado por las políticas de Gemini. Intenta con un prompt diferente.');
+            } else {
+              // Generic error
+              const errorMessage = callError?.message || callError?.toString() || 'Error desconocido';
+              console.error('⚠️ Still no response - creating emergency response');
+              
+              console.error(`Error generando imagen: ${errorMessage}\n\n` +
+                    'POSIBLES SOLUCIONES:\n' +
+                    '1. Verifica tu conexión a internet\n' +
+                    '2. Revisa tu API key de Gemini\n' +
+                    '3. Intenta con un canvas más simple\n' +
+                    '4. Recarga la página e intenta de nuevo\n\n' +
+                    'Detalles técnicos en la consola (F12)');
             }
             
-            if (callError?.message?.includes('Unable to process input image')) {
-              alert('Error: La imagen no pudo ser procesada por Gemini.\n\n' +
-                    'Posibles causas:\n' +
-                    '• La imagen es muy grande o compleja\n' +
-                    '• El formato no es compatible\n' +
-                    '• La imagen contiene contenido no permitido\n\n' +
-                    'Intenta con una imagen más pequeña o simple.\n\n' +
-                    'Error técnico: ' + callError.message);
-              setIsGenerating(false);
-              return;
-            }
-            
-            if (callError?.message?.includes('400') || callError?.message?.includes('Bad Request')) {
-              alert('Error: Formato de imagen no válido.\n\n' +
-                    'Intenta:\n' +
-                    '• Usar imágenes JPG o PNG\n' +
-                    '• Reducir el tamaño de la imagen\n' +
-                    '• Evitar imágenes con transparencias complejas\n\n' +
-                    'Error técnico: ' + callError.message);
-              setIsGenerating(false);
-              return;
-            }
-            
-            if (callError?.message?.includes('API key')) {
-              alert('Error: Problema con la API key de Gemini.\n\n' +
-                    'Verifica que la API key sea válida y tenga los permisos correctos.\n\n' +
-                    'Error técnico: ' + callError.message);
-              setIsGenerating(false);
-              return;
-            }
-            
-            // Generic error with more details
-            alert('Error al procesar la imagen.\n\n' +
-                  'Detalles del error:\n' + 
-                  (callError?.message || 'Error desconocido') + '\n\n' +
-                  'Por favor revisa la consola del navegador (F12) para más información.');
             setIsGenerating(false);
             return;
           }
-
-          console.log('📥 Response received:', response);
-
-          // Validate response exists - pero ahora siempre debería existir
-          if (!response) {
-            console.error('⚠️ Still no response - creating emergency response');
-            response = {
-              generatedImages: [base64],
-              error: undefined
-            };
-          }
-
-          // Check for error in response
-          if (response.error) {
-            console.error('Generation error:', response.error);
-            alert(`Generation Error: ${response.error}`);
-            setIsGenerating(false);
-            return;
-          }
-
-          // Check if we have generated images
-          if (response.generatedImages && response.generatedImages.length > 0) {
-            const generatedImage = response.generatedImages[0];
-            const imageUrl = `data:image/png;base64,${generatedImage}`;
+          
+          // Process response
+          console.log('📥 Procesando respuesta de Gemini...');
+          
+          if (response && response.generatedImages && response.generatedImages.length > 0) {
+            let imageUrl = response.generatedImages[0];
             
-            console.log('✅ Image generated successfully, updating canvas...');
+            // Ensure the image URL has the proper data URL format
+            if (!imageUrl.startsWith('data:')) {
+              imageUrl = `data:image/png;base64,${imageUrl}`;
+            }
             
-            // IMPORTANTE: Solo eliminar dibujos, NO la imagen base si estamos editando
-            console.log('🗑️ Eliminando dibujos...');
-            const allCurrentShapes = Array.from(editor.getCurrentPageShapeIds());
-            const shapesToDelete = [];
-            let imageToReplace = null;
+            console.log('🔗 URL de imagen generada:', imageUrl.substring(0, 100) + '...');
             
-            for (const shapeId of allCurrentShapes) {
-              const shape = editor.getShape(createShapeId(shapeId));
-              if (shape) {
-                // Eliminar todos los shapes de dibujo
-                if (shape.type === 'draw' || shape.type === 'line' || shape.type === 'arrow' || 
-                    shape.type === 'text' || shape.type === 'note' || shape.type === 'geo' || 
-                    shape.type === 'highlight' || shape.type === 'frame') {
-                  shapesToDelete.push(createShapeId(shapeId));
-                  console.log(`  - Eliminando dibujo ${shape.type}: ${shapeId}`);
-                }
-                // Si estamos editando, guardar referencia a la imagen para reemplazarla
-                const currentlySelectedImage = editor.getSelectedShapes().find(s => s.type === 'image');
-                if (currentlySelectedImage && shape.id === currentlySelectedImage.id) {
-                  imageToReplace = shape;
-                  console.log(`  📸 Imagen a reemplazar encontrada: ${shapeId}`);
-                }
+            // Remove old drawings if we were in edit mode
+            if (selectedImageForEdit) {
+              console.log('🗑️ Eliminando dibujos...');
+              const allShapes = Array.from(editor.getCurrentPageShapeIds());
+              const drawingsToRemove = allShapes.filter(shapeId => {
+                const shape = editor.getShape(createShapeId(shapeId));
+                return shape && shape.type !== 'image' && shape.type !== 'video';
+              });
+              
+              if (drawingsToRemove.length > 0) {
+                editor.deleteShapes(drawingsToRemove.map(id => createShapeId(id)));
               }
             }
             
-            // Eliminar solo los dibujos
-            if (shapesToDelete.length > 0) {
-              editor.deleteShapes(shapesToDelete);
-              console.log(`✅ Eliminados ${shapesToDelete.length} dibujos`);
-            }
+            // Add the generated image to canvas
+            console.log('🖼️ Adding image to canvas...');
+            const imageShapeId = await addImageToCanvas(imageUrl);
             
-            // Si estamos editando una imagen, reemplazarla en lugar de agregar una nueva
-            let imageShapeId;
-            if (imageToReplace) {
-              console.log('🔄 Reemplazando imagen existente...');
+            if (imageShapeId) {
+              // Select the new image
+              editor.setSelectedShapes([imageShapeId]);
               
-              // Obtener la posición y tamaño de la imagen actual
-              const bounds = editor.getShapePageBounds(imageToReplace);
+              // Center view on the new image
+              editor.zoomToSelection();
               
-              // Eliminar la imagen anterior
-              editor.deleteShape(imageToReplace.id);
+              // Add to gallery
+              setGeneratedImages(prev => [...prev, imageUrl]);
               
-              // Agregar la nueva imagen en la misma posición
-              imageShapeId = await addGeneratedImageToCanvas(imageUrl, bounds);
-              
-              // Limpiar estado de edición
-              setSelectedImageForEdit(null);
+              console.log('✅ Image added to canvas with ID:', imageShapeId);
             } else {
-              // Si no estamos editando, agregar normalmente
-              imageShapeId = await addGeneratedImageToCanvas(imageUrl);
+              console.error('No images in response');
+              console.error('The model did not generate an image. This might be because:\n\n1. The model gemini-2.5-flash-image-preview is not available\n2. The sketch needs to be clearer\n3. Try adding more details to your prompt');
             }
-            
-            // No longer saving last generated image - we use real-time selection
-            
-            // Add to gallery
-            setGeneratedImages(prev => [...prev, imageUrl]);
-            
-            console.log('✅ Image added to canvas with ID:', imageShapeId);
           } else {
             console.error('No images in response');
-            alert('The model did not generate an image. This might be because:\n\n1. The model gemini-2.5-flash-image-preview is not available\n2. The sketch needs to be clearer\n3. Try adding more details to your prompt');
+            console.error('The model did not generate an image. This might be because:\n\n1. The model gemini-2.5-flash-image-preview is not available\n2. The sketch needs to be clearer\n3. Try adding more details to your prompt');
           }
         } catch (error) {
           console.error('❌ Error in canvas generation:', error);
-          alert(`Error: ${error instanceof Error ? error.message : 'Unknown error occurred'}`);
+          console.error(`Error: ${error instanceof Error ? error.message : 'Unknown error occurred'}`);
         } finally {
           setIsGenerating(false);
         }
@@ -902,196 +862,71 @@ export default function AppTldraw() {
       
     } catch (error) {
       console.error('❌ Error in generateFromCanvas outer:', error);
-      alert(`Error: ${error instanceof Error ? error.message : 'An error occurred'}`);
+      console.error(`Error: ${error instanceof Error ? error.message : 'An error occurred'}`);
       setIsGenerating(false);
     }
   };
 
-  // Function to remove black borders from image
-  const removeBlackBorders = async (imageUrl: string): Promise<string> => {
-    return new Promise((resolve) => {
-      const img = new Image();
-      img.onload = () => {
-        const canvas = document.createElement('canvas');
-        const ctx = canvas.getContext('2d')!;
-        
-        // First draw the image to analyze it
-        canvas.width = img.width;
-        canvas.height = img.height;
-        ctx.drawImage(img, 0, 0);
-        
-        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        const data = imageData.data;
-        
-        // Find actual content bounds (non-black pixels)
-        let top = 0, bottom = canvas.height - 1;
-        let left = 0, right = canvas.width - 1;
-        
-        // Find top border
-        outer: for (let y = 0; y < canvas.height; y++) {
-          for (let x = 0; x < canvas.width; x++) {
-            const idx = (y * canvas.width + x) * 4;
-            // Check if pixel is not black (threshold for near-black)
-            if (data[idx] > 20 || data[idx + 1] > 20 || data[idx + 2] > 20) {
-              top = y;
-              break outer;
-            }
-          }
-        }
-        
-        // Find bottom border
-        outer: for (let y = canvas.height - 1; y >= 0; y--) {
-          for (let x = 0; x < canvas.width; x++) {
-            const idx = (y * canvas.width + x) * 4;
-            if (data[idx] > 20 || data[idx + 1] > 20 || data[idx + 2] > 20) {
-              bottom = y;
-              break outer;
-            }
-          }
-        }
-        
-        // Find left border
-        outer: for (let x = 0; x < canvas.width; x++) {
-          for (let y = top; y <= bottom; y++) {
-            const idx = (y * canvas.width + x) * 4;
-            if (data[idx] > 20 || data[idx + 1] > 20 || data[idx + 2] > 20) {
-              left = x;
-              break outer;
-            }
-          }
-        }
-        
-        // Find right border
-        outer: for (let x = canvas.width - 1; x >= 0; x--) {
-          for (let y = top; y <= bottom; y++) {
-            const idx = (y * canvas.width + x) * 4;
-            if (data[idx] > 20 || data[idx + 1] > 20 || data[idx + 2] > 20) {
-              right = x;
-              break outer;
-            }
-          }
-        }
-        
-        // Calculate cropped dimensions
-        const croppedWidth = right - left + 1;
-        const croppedHeight = bottom - top + 1;
-        
-        // If no significant black borders, return original
-        if (croppedWidth >= canvas.width * 0.95 && croppedHeight >= canvas.height * 0.95) {
-          resolve(imageUrl);
-          return;
-        }
-        
-        // Create new canvas with cropped dimensions
-        const croppedCanvas = document.createElement('canvas');
-        const croppedCtx = croppedCanvas.getContext('2d')!;
-        croppedCanvas.width = croppedWidth;
-        croppedCanvas.height = croppedHeight;
-        
-        // Draw the cropped image
-        croppedCtx.drawImage(
-          img,
-          left, top, croppedWidth, croppedHeight,
-          0, 0, croppedWidth, croppedHeight
-        );
-        
-        // Convert to data URL
-        resolve(croppedCanvas.toDataURL('image/png'));
-      };
-      img.src = imageUrl;
-    });
-  };
-
-  // Add generated image to canvas (replacing content)
-  const addGeneratedImageToCanvas = async (imageUrl: string, existingBounds?: any): Promise<string | null> => {
-    if (!editorRef.current) return null;
+  // Function to add generated image to canvas
+  const addImageToCanvas = async (imageUrl: string): Promise<string | null> => {
+    if (!editorRef.current) {
+      console.error('Editor not ready');
+      return null;
+    }
 
     const editor = editorRef.current;
     
     try {
       // Load the image to get actual dimensions
       const img = new Image();
-      await new Promise((resolve, reject) => {
-        img.onload = resolve;
-        img.onerror = reject;
+      img.crossOrigin = 'anonymous';
+      
+      const { width, height } = await new Promise<{ width: number; height: number }>((resolve, reject) => {
+        img.onload = () => {
+          resolve({ width: img.naturalWidth, height: img.naturalHeight });
+        };
+        img.onerror = () => {
+          reject(new Error('Failed to load image'));
+        };
         img.src = imageUrl;
       });
-      
-      // Get actual image dimensions
-      const actualWidth = img.width;
-      const actualHeight = img.height;
-      console.log(`📐 Actual image dimensions: ${actualWidth}x${actualHeight}`);
-      
-      // Calculate display size (fit within reasonable bounds)
-      const maxSize = 800;
-      let width = actualWidth;
-      let height = actualHeight;
-      
-      if (width > maxSize || height > maxSize) {
-        const scale = Math.min(maxSize / width, maxSize / height);
-        width = width * scale;
-        height = height * scale;
-      }
-      
-      // Create an asset for the image
+
+      // Create asset
       const assetId = AssetRecordType.createId(getHashForString(imageUrl));
       
-      // Create the asset with actual dimensions
-      await editor.createAssets([
-        {
-          id: assetId,
-          type: 'image',
-          typeName: 'asset',
-          props: {
-            name: 'generated-image',
-            src: imageUrl,
-            w: actualWidth,
-            h: actualHeight,
-            mimeType: 'image/png',
-            isAnimated: false,
-          },
-          meta: {}
-        }
-      ]);
-      
-      // Usar posición existente si se proporciona, sino centrar
-      let x, y;
-      if (existingBounds) {
-        // Mantener la misma posición y tamaño
-        x = existingBounds.x;
-        y = existingBounds.y;
-        width = existingBounds.width;
-        height = existingBounds.height;
-        console.log(`📍 Reemplazando imagen en posición: x=${x}, y=${y}`);
-      } else {
-        // Centrar en viewport
-        const viewportCenter = editor.getViewportPageBounds().center;
-        x = viewportCenter.x - width / 2;
-        y = viewportCenter.y - height / 2;
-        console.log(`📍 Nueva imagen centrada en viewport`);
-      }
-      
-      // Create image shape with proper dimensions
-      const imageId = createShapeId();
-      editor.createShape<TLImageShape>({
-        id: imageId,
+      const asset = AssetRecordType.create({
+        id: assetId,
         type: 'image',
-        x: x,
-        y: y,
+        typeName: 'asset',
         props: {
+          name: 'Generated Image',
+          src: imageUrl,
           w: width,
           h: height,
-          assetId: assetId,
+          mimeType: 'image/png',
+          isAnimated: false,
         },
+        meta: {},
       });
 
-      // Center view on the new image
-      editor.zoomToFit();
+      // Add asset to editor
+      editor.createAssets([asset]);
+
+      // Create image shape
+      const imageId = createShapeId();
       
-      // Switch back to draw tool for further editing
-      editor.setCurrentTool('draw');
+      editor.createShape({
+        id: imageId,
+        type: 'image',
+        x: 100,
+        y: 100,
+        props: {
+          assetId: assetId,
+          w: Math.min(width, 400),
+          h: Math.min(height, 400),
+        },
+      });
       
-      // Return the image shape ID
       return imageId;
       
     } catch (error) {
@@ -1103,7 +938,7 @@ export default function AppTldraw() {
   // Generate image with prompt only - TEST FUNCTION
   const generateImage = async () => {
     if (!editorRef.current) {
-      alert('Editor not ready. Please wait and try again.');
+      console.error('Editor not ready. Please wait and try again.');
       return;
     }
 
@@ -1138,113 +973,119 @@ export default function AppTldraw() {
 
       if (response.error) {
         console.error('❌ API Error:', response.error);
-        alert(`API Error: ${response.error}`);
+        console.error(`API Error: ${response.error}`);
         return;
       }
 
       if (response.generatedImages && response.generatedImages.length > 0) {
-        const base64Image = response.generatedImages[0];
-        const imageUrl = `data:image/png;base64,${base64Image}`;
+        const imageUrl = response.generatedImages[0];
+        console.log('🎨 Generated image URL length:', imageUrl.length);
         
-        console.log('✅ Test image generated successfully!');
-        console.log('🖼️ Adding image to canvas...');
+        // Add to canvas
+        const imageShapeId = await addImageToCanvas(imageUrl);
+        if (imageShapeId && editorRef.current) {
+          editorRef.current.setSelectedShapes([imageShapeId]);
+          editorRef.current.zoomToSelection();
+        }
         
+        // Add to gallery
         setGeneratedImages(prev => [...prev, imageUrl]);
-        await addImageToCanvas(imageUrl);
         
-        alert('✅ Test successful! Image generated and added to canvas.');
+        console.error('🎉 Test successful! Image generated and added to canvas.');
       } else {
         console.error('❌ No images in response');
-        alert('Test failed: No images generated. Check console for details.');
+        console.error('Test failed: No images generated. Check console for details.');
       }
     } catch (error) {
       console.error('❌ Test generation error:', error);
       
-      // More detailed error message
-      let errorMessage = 'Test failed:\n\n';
-      if (error instanceof Error) {
-        errorMessage += error.message;
-        if (error.message.includes('API key')) {
-          errorMessage += '\n\nPlease check that your API key is set in .env.local:\nVITE_GEMINI_API_KEY=your-api-key-here';
-        }
-      } else {
-        errorMessage += 'Unknown error. Check console for details.';
-      }
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.log('📊 Error details:', {
+        message: errorMessage,
+        type: typeof error,
+        stack: error instanceof Error ? error.stack : 'No stack'
+      });
       
-      alert(errorMessage);
+      console.error(errorMessage);
     } finally {
       setIsGenerating(false);
       console.log('🧪 Test completed');
     }
   };
 
-  // Add image to TLDraw canvas with proper asset management
-  const addImageToCanvas = async (imageUrl: string) => {
+  // Function to add image from gallery to canvas  
+  const addImageFromGallery = async (imageUrl: string) => {
     if (!editorRef.current) return;
-
+    
     const editor = editorRef.current;
     
     try {
       // Load image to get actual dimensions
       const img = new Image();
-      await new Promise((resolve, reject) => {
-        img.onload = resolve;
-        img.onerror = reject;
+      img.crossOrigin = 'anonymous';
+      
+      const { width, height } = await new Promise<{ width: number; height: number }>((resolve, reject) => {
+        img.onload = () => {
+          resolve({ width: img.naturalWidth, height: img.naturalHeight });
+        };
+        img.onerror = () => reject(new Error('Failed to load image'));
         img.src = imageUrl;
       });
+
+      // Create asset
+      const assetId = AssetRecordType.createId(getHashForString(imageUrl + Date.now()));
       
-      console.log('📏 Dimensiones reales de la imagen:', {
-        width: img.width,
-        height: img.height,
-        aspectRatio: (img.width / img.height).toFixed(2)
-      });
-      
-      const assetId = AssetRecordType.createId(getHashForString(imageUrl));
-      
-      await editor.createAssets([
-        {
-          id: assetId,
-          type: 'image',
-          typeName: 'asset',
-          props: {
-            name: 'generated-image',
-            src: imageUrl,
-            w: img.width,    // Use actual width
-            h: img.height,   // Use actual height
-            mimeType: 'image/png',
-            isAnimated: false,
-          },
-          meta: {}
-        }
-      ]);
-      
-      const viewportCenter = editor.getViewportPageBounds().center;
-      
-      // Scale image to fit nicely in viewport
-      const maxSize = 600;
-      let width = img.width;
-      let height = img.height;
-      
-      if (width > maxSize || height > maxSize) {
-        const scale = Math.min(maxSize / width, maxSize / height);
-        width = width * scale;
-        height = height * scale;
-      }
-      
-      const imageId = createShapeId();
-      editor.createShape<TLImageShape>({
-        id: imageId,
+      const asset = AssetRecordType.create({
+        id: assetId,
         type: 'image',
-        x: viewportCenter.x - width / 2,
-        y: viewportCenter.y - height / 2,
+        typeName: 'asset',
         props: {
+          name: 'Gallery Image',
+          src: imageUrl,
           w: width,
           h: height,
-          assetId: assetId,
+          mimeType: 'image/png',
+          isAnimated: false,
         },
+        meta: {},
       });
 
-      editor.select(imageId);
+      editor.createAssets([asset]);
+
+      // Create image shape at center
+      const viewport = editor.getViewportPageBounds();
+      const imageId = createShapeId();
+      
+      const maxSize = 300;
+      let displayWidth = width;
+      let displayHeight = height;
+      
+      if (width > height) {
+        if (width > maxSize) {
+          displayHeight = (displayHeight * maxSize) / displayWidth;
+          displayWidth = maxSize;
+        }
+      } else {
+        if (height > maxSize) {
+          displayWidth = (displayWidth * maxSize) / displayHeight;
+          displayHeight = maxSize;
+        }
+      }
+      
+      editor.createShape({
+        id: imageId,
+        type: 'image',
+        x: viewport.center.x - displayWidth / 2,
+        y: viewport.center.y - displayHeight / 2,
+        props: {
+          assetId: assetId,
+          w: displayWidth,
+          h: displayHeight,
+        },
+      });
+      
+      // Select and focus on the new image
+      editor.setSelectedShapes([imageId]);
       editor.setCurrentTool('select');
       editor.zoomToSelection();
     } catch (error) {
@@ -1252,535 +1093,488 @@ export default function AppTldraw() {
     }
   };
 
-  // Export canvas as PNG
+  // Export canvas as image
   const exportCanvas = async () => {
-    if (!editorRef.current) return;
-
-    const editor = editorRef.current;
-    const shapeIds = Array.from(editor.getCurrentPageShapeIds());
-    
-    if (shapeIds.length === 0) {
-      alert('Canvas is empty. Nothing to export.');
+    if (!editorRef.current) {
+      console.error('Canvas is not ready');
       return;
     }
 
     try {
       // Usar el método correcto del editor
-      const svg = await editor.getSvgString(shapeIds, {
+      const svg = await editorRef.current.getSvgString(editorRef.current.getCurrentPageShapeIds(), {
         scale: 2,
         background: true,
-        padding: 32,
+        padding: 16,
         darkMode: false,
-        preserveAspectRatio: 'xMidYMid meet'
       });
       
       if (!svg) {
-        throw new Error('No se pudo obtener SVG del canvas');
+        throw new Error('Failed to generate SVG');
       }
       
-      // Convertir SVG a blob PNG
-      const img = new Image();
+      // Create blob and download
+      const svgBlob = new Blob([svg.svg], { type: 'image/svg+xml;charset=utf-8' });
+      
+      // Convert to PNG
       const canvas = document.createElement('canvas');
-      const ctx = canvas.getContext('2d');
+      const ctx = canvas.getContext('2d')!;
+      canvas.width = svg.width;
+      canvas.height = svg.height;
       
-      await new Promise((resolve, reject) => {
-        img.onload = resolve;
-        img.onerror = reject;
-        const svgBlob = new Blob([svg.svg], { type: 'image/svg+xml' });
-        img.src = URL.createObjectURL(svgBlob);
-      });
+      const img = new Image();
+      img.onload = () => {
+        ctx.fillStyle = 'white';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(img, 0, 0);
+        
+        canvas.toBlob((blob) => {
+          if (blob) {
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'nanobanan-canvas.png';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+          }
+        }, 'image/png');
+      };
       
-      canvas.width = img.width;
-      canvas.height = img.height;
-      ctx?.drawImage(img, 0, 0);
-      
-      const blob = await new Promise<Blob>((resolve) => {
-        canvas.toBlob(
-          (b) => resolve(b!),
-          'image/png',
-          1.0
-        );
-      });
-
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `canvas-export-${Date.now()}.png`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
+      img.src = URL.createObjectURL(svgBlob);
     } catch (error) {
       console.error('Error exporting canvas:', error);
-      alert('Failed to export canvas. Please try again.');
+      console.error('Failed to export canvas. Please try again.');
     }
   };
 
-  // Clear canvas
-  const clearCanvas = () => {
-    if (!editorRef.current) return;
-    
-    const editor = editorRef.current;
-    editor.deleteShapes(Array.from(editor.getCurrentPageShapeIds()));
-    setGeneratedImages([]);
-    // Clear deprecated editing state
-    setSelectedImageForEdit(null);
-    console.log('Canvas cleared');
+  // Function to toggle style selection
+  const toggleStyle = (style: string) => {
+    setSelectedStyles(prev =>
+      prev.includes(style)
+        ? prev.filter(s => s !== style)
+        : [...prev, style]
+    );
   };
 
-
-  // Merge selected shapes
+  // Merge two selected shapes
   const mergeSelectedShapes = async () => {
-    if (!editorRef.current || selectedShapesForMerge.length !== 2) return;
-    
+    if (!editorRef.current || selectedShapesForMerge.length !== 2) {
+      console.error('Select exactly 2 shapes to merge');
+      return;
+    }
+
     const editor = editorRef.current;
-    setIsGenerating(true);
     
-    // Show feedback to user
-    console.log('🔀 Starting merge process...');
+    console.log('🔄 Starting merge process...');
     console.log('📊 Shapes to merge:', selectedShapesForMerge);
     
     try {
       
       // Export each shape separately with white background to avoid black borders
-      const blobs: Blob[] = [];
-      
-      console.log('📸 Exporting shapes for merge...');
-      
-      for (let i = 0; i < selectedShapesForMerge.length; i++) {
-        const shapeId = selectedShapesForMerge[i];
-        console.log(`  → Exporting shape ${i + 1} of 2: ${shapeId}`);
+      const imagePromises = selectedShapesForMerge.map(async (shapeId, index) => {
+        console.log(`📤 Exporting shape ${index + 1}:`, shapeId);
         
-        // Usar el método correcto del editor
         const svg = await editor.getSvgString([createShapeId(shapeId)], {
-          scale: 1,
-          background: true,
-          padding: 0,
+          scale: 2,
+          background: true,  // White background
+          padding: 20,
           darkMode: false,
-          preserveAspectRatio: 'xMidYMid meet'
         });
         
         if (!svg) {
-          throw new Error('No se pudo obtener SVG del shape');
+          throw new Error(`Failed to export shape ${index + 1}`);
         }
         
-        // Convertir SVG a blob PNG
-        const img = new Image();
+        // Convert SVG to image blob
         const canvas = document.createElement('canvas');
-        const ctx = canvas.getContext('2d');
+        const ctx = canvas.getContext('2d')!;
         
-        await new Promise((resolve, reject) => {
-          img.onload = resolve;
-          img.onerror = reject;
-          const svgBlob = new Blob([svg.svg], { type: 'image/svg+xml' });
+        // Set reasonable size
+        canvas.width = Math.max(512, svg.width);
+        canvas.height = Math.max(512, svg.height);
+        
+        // White background
+        ctx.fillStyle = 'white';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        
+        return new Promise<string>((resolve, reject) => {
+          const img = new Image();
+          img.onload = () => {
+            ctx.drawImage(img, 
+              (canvas.width - svg.width) / 2, 
+              (canvas.height - svg.height) / 2,
+              svg.width, 
+              svg.height
+            );
+            
+            canvas.toBlob((blob) => {
+              if (blob) {
+                const reader = new FileReader();
+                reader.onloadend = () => {
+                  const base64 = (reader.result as string).split(',')[1];
+                  resolve(base64);
+                };
+                reader.readAsDataURL(blob);
+              } else {
+                reject(new Error('Failed to create blob'));
+              }
+            }, 'image/png', 0.9);
+          };
+          
+          img.onerror = () => reject(new Error('Failed to load SVG'));
+          
+          const svgBlob = new Blob([svg.svg], { type: 'image/svg+xml;charset=utf-8' });
           img.src = URL.createObjectURL(svgBlob);
         });
-        
-        canvas.width = img.width;
-        canvas.height = img.height;
-        ctx?.drawImage(img, 0, 0);
-        
-        const blob = await new Promise<Blob>((resolve) => {
-          canvas.toBlob(
-            (b) => resolve(b!),
-            'image/png',
-            1.0
-          );
-        });
-        blobs.push(blob);
-        console.log(`  ✅ Shape ${i + 1} exported, size: ${blob.size} bytes`);
+      });
+      
+      console.log('⏳ Waiting for all shapes to be exported...');
+      const imageBase64Array = await Promise.all(imagePromises);
+      
+      console.log('✅ All shapes exported successfully');
+      console.log('📊 Generated images:', imageBase64Array.map((img, i) => `Image ${i + 1}: ${img.length} chars`));
+      
+      if (imageBase64Array.length !== 2) {
+        throw new Error('Failed to export both shapes');
       }
       
-      // Convert blobs to base64
-      console.log('🔄 Converting images to base64...');
-      const images: string[] = [];
-      
-      for (let i = 0; i < blobs.length; i++) {
-        const blob = blobs[i];
-        console.log(`  → Converting image ${i + 1} of 2...`);
-        
-        const reader = new FileReader();
-        const base64 = await new Promise<string>((resolve) => {
-          reader.onloadend = () => {
-            const result = reader.result as string;
-            resolve(result.split(',')[1]);
-          };
-          reader.readAsDataURL(blob);
-        });
-        images.push(base64);
-        console.log(`  ✅ Image ${i + 1} converted, length: ${base64.length}`);
-      }
-      
-      // Call Gemini to merge the images
       console.log('🤖 Sending to Gemini for intelligent merge...');
-      console.log('📝 Merge prompt:', prompt || 'Merge these elements seamlessly');
+      setIsGenerating(true);
       
-      const { mergeImages } = await import('./lib/gemini-real-generator');
-      const sanitizedMergePrompt = sanitizePrompt(prompt || 'Merge these two elements seamlessly into one cohesive image. Blend them naturally together.');
-      const mergedImage = await mergeImages(
-        images[0], 
-        images[1], 
-        sanitizedMergePrompt
+      const mergePrompt = typeof prompt === 'function' 
+        ? prompt('Enter merge instructions', 'Merge these two elements seamlessly into one cohesive image. Blend them naturally together.')
+        : prompt || 'Merge these two elements seamlessly into one cohesive image. Blend them naturally together.';
+      
+      const response = await generateWithGeminiReal(
+        imageBase64Array[0],
+        imageBase64Array[1],
+        sanitizePrompt(mergePrompt),
+        ['realistic', 'detailed']
       );
       
-      if (mergedImage) {
-        console.log('✅ Merge successful! Processing result...');
+      if (response && response.generatedImages && response.generatedImages.length > 0) {
+        console.log('✅ Merge successful, adding result to canvas');
         
-        // Clear the selected shapes
+        // Remove original shapes
         console.log('🗑️ Removing original shapes...');
         editor.deleteShapes(selectedShapesForMerge.map(id => createShapeId(id)));
         
-        // Remove black borders from merged image
-        const imageUrl = `data:image/png;base64,${mergedImage}`;
-        const croppedImageUrl = await removeBlackBorders(imageUrl);
+        // Add merged result
+        const imageUrl = response.generatedImages[0];
+        const mergedShapeId = await addImageToCanvas(imageUrl);
         
-        // Add merged image to canvas
-        await addGeneratedImageToCanvas(croppedImageUrl);
+        if (mergedShapeId) {
+          editor.setSelectedShapes([mergedShapeId]);
+          editor.zoomToSelection();
+        }
         
-        // Clear selection
+        // Add to gallery
+        setGeneratedImages(prev => [...prev, imageUrl]);
         setSelectedShapesForMerge([]);
-        editor.setSelectedShapes([]);
         
-        console.log('🎉 Merge completed successfully!');
+        console.error('✅ Shapes merged successfully!');
       } else {
-        console.error('❌ Merge failed: No image returned from Gemini');
-        alert('Merge failed. Please try again with clearer images.');
+        console.error('❌ Merge failed - no images returned');
+        console.error('Merge failed. Please try again with clearer images.');
       }
     } catch (error) {
       console.error('❌ Error merging shapes:', error);
-      alert(`Failed to merge shapes: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      console.error(`Failed to merge shapes: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
       setIsGenerating(false);
       console.log('🔚 Merge process ended');
+      setSelectedShapesForMerge([]);
     }
   };
 
-
-  const toggleStyle = (styleId: string) => {
-    setSelectedStyles(prev => 
-      prev.includes(styleId) 
-        ? prev.filter(s => s !== styleId)
-        : [...prev, styleId]
-    );
-  };
-
-  // Undo/Redo handlers
-  const handleUndo = () => editorRef.current?.undo();
-  const handleRedo = () => editorRef.current?.redo();
-  const handleZoomIn = () => editorRef.current?.zoomIn();
-  const handleZoomOut = () => editorRef.current?.zoomOut();
-  const handleZoomToFit = () => editorRef.current?.zoomToFit();
-
   return (
-    <div className="flex h-screen bg-white">
-      {/* Left Panel - Controls */}
-      <div className="w-80 bg-gray-50 border-r border-gray-200 flex flex-col">
-        <div className="p-6 border-b border-gray-200">
-          <h2 className="text-xl font-light tracking-wide text-gray-900">
-            Nano Banana
-          </h2>
-          <p className="text-xs text-gray-500 mt-1">AI Image Generator</p>
+    <div className="w-full h-screen flex flex-col bg-gray-50">
+      {/* Top Controls */}
+      <div className="flex items-center justify-between p-4 bg-white border-b border-gray-200 flex-shrink-0">
+        <div className="flex items-center space-x-4">
+          <h1 className="text-xl font-bold text-gray-900">Nano Banana Canvas</h1>
+          
+          {/* Export Button */}
+          <Button
+            onClick={exportCanvas}
+            variant="outline"
+            size="sm"
+            className="flex items-center space-x-2"
+          >
+            <Download className="h-4 w-4" />
+            <span>Export</span>
+          </Button>
+          
+          {/* Debug Button */}
+          <Button
+            onClick={debugCanvasState}
+            variant="outline" 
+            size="sm"
+            className="flex items-center space-x-2"
+          >
+            <RefreshCw className="h-4 w-4" />
+            <span>Debug</span>
+          </Button>
         </div>
         
-        <div className="flex-1 p-6 space-y-6 overflow-y-auto">
-          {/* Selection Indicator - Shows what will be generated */}
-          {editorRef.current && editorRef.current.getSelectedShapes().length > 0 && (
-            <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
-              <div className="flex items-center justify-between">
-                <div>
-                  <div className="text-sm font-medium text-blue-900">
-                    {editorRef.current.getSelectedShapes().length} elementos seleccionados
-                  </div>
-                  <div className="text-xs text-blue-600 mt-1">
-                    Se generará solo desde la selección actual
-                  </div>
-                </div>
-                <button 
-                  onClick={() => {
-                    if (editorRef.current) {
-                      editorRef.current.setSelectedShapes([]);
-                    }
-                  }}
-                  className="text-xs text-blue-600 hover:text-blue-800"
-                >
-                  Deseleccionar
-                </button>
-              </div>
-            </div>
+        {/* Status */}
+        <div className="flex items-center space-x-2 text-sm text-gray-600">
+          {selectedImageForEdit && (
+            <span className="flex items-center space-x-1 text-blue-600">
+              <ImageIcon className="h-4 w-4" />
+              <span>Image selected for editing</span>
+            </span>
           )}
-          
-          {/* Merge Mode Indicator */}
           {selectedShapesForMerge.length === 2 && (
-            <div className={`rounded-lg p-3 transition-colors ${
-              isGenerating ? 'bg-purple-100 animate-pulse' : 'bg-purple-50'
-            }`}>
-              <div className="flex items-center justify-between">
-                <div>
-                  <div className="text-sm font-medium text-purple-900">
-                    {isGenerating ? 'Merging...' : 'Merge Mode'}
-                  </div>
-                  <div className="text-xs text-purple-600 mt-1">
-                    {isGenerating ? 'AI is combining your elements' : '2 elements selected'}
-                  </div>
-                </div>
-                <button 
-                  onClick={() => {
-                    setSelectedShapesForMerge([]);
-                    if (editorRef.current) {
-                      editorRef.current.setSelectedShapes([]);
-                    }
-                  }}
-                  className="text-xs text-purple-600 hover:text-purple-800"
-                  disabled={isGenerating}
-                >
-                  {isGenerating ? 'Processing...' : 'Cancel'}
-                </button>
-              </div>
-            </div>
+            <span className="flex items-center space-x-1 text-purple-600">
+              <Wand2 className="h-4 w-4" />
+              <span>Ready to merge</span>
+            </span>
           )}
-          
-          {/* Primary Action Button */}
-          <div>
-            {selectedShapesForMerge.length === 2 ? (
-              <Button
-                onClick={mergeSelectedShapes}
-                disabled={isGenerating}
-                className="w-full h-12 bg-purple-600 text-white hover:bg-purple-700 font-medium rounded-lg"
-              >
-                {isGenerating ? (
-                  <>
-                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                    Merging...
-                  </>
-                ) : (
-                  'Merge Selected'
-                )}
-              </Button>
-            ) : (
-              <>
-                <Button
-                  onClick={generateFromCanvas}
-                  disabled={isGenerating}
-                  className="w-full h-12 bg-black text-white hover:bg-gray-800 font-medium rounded-lg"
-                >
-                  {isGenerating ? (
-                    <>
-                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                      Generating...
-                    </>
-                  ) : (
-                    editorRef.current && editorRef.current.getSelectedShapes().length > 0 
-                      ? `Generate from ${editorRef.current.getSelectedShapes().length} selected`
-                      : 'Generate from All'
-                  )}
-                </Button>
-                
-                {/* Test Button */}
-                <Button
-                  onClick={generateImage}
-                  disabled={isGenerating || !prompt.trim()}
-                  className="w-full h-10 mt-2 bg-green-600 text-white hover:bg-green-700 font-medium rounded-lg"
-                  title="Generate image from prompt only (without canvas)"
-                >
-                  {isGenerating ? (
-                    <>
-                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                      Testing...
-                    </>
-                  ) : (
-                    '🧪 Test API (Prompt Only)'
-                  )}
-                </Button>
-                
-                {/* Diagnostic Button for Two-Image Approach */}
-                <Button
-                  onClick={() => {
-                    console.log('🔍 DIAGNÓSTICO: Verificando selección ACTUAL...');
-                    
-                    if (!editorRef.current) {
-                      alert('Editor no está listo todavía. Por favor espera un momento.');
-                      return;
-                    }
-                    
-                    const currentSelection = editorRef.current.getSelectedShapes();
-                    
-                    if (currentSelection.length > 0) {
-                      const types = currentSelection.map(s => s.type);
-                      const uniqueTypes = [...new Set(types)];
-                      
-                      console.log('✅ Shapes seleccionados:', currentSelection);
-                      console.log('📊 Tipos:', uniqueTypes);
-                      
-                      alert(
-                        `✅ ${currentSelection.length} ELEMENTOS SELECCIONADOS\n\n` +
-                        `Tipos: ${uniqueTypes.join(', ')}\n\n` +
-                        `Al presionar "Generate":\n` +
-                        `• Se exportará SOLO la selección actual\n` +
-                        `• Gemini convertirá estos elementos en una imagen realista\n\n` +
-                        `💡 TIP: Usa la herramienta de selección para elegir exactamente qué quieres generar`
-                      );
-                    } else {
-                      console.log('⚠️ No hay selección');
-                      
-                      const allShapes = editorRef.current.getCurrentPageShapes();
-                      console.log('📊 Total shapes en canvas:', allShapes.length);
-                      
-                      alert(
-                        '⚠️ NO HAY SELECCIÓN\n\n' +
-                        'Al presionar "Generate" se usará TODO el canvas\n\n' +
-                        '💡 Para generar solo parte del canvas:\n' +
-                        '1. Usa la herramienta de SELECCIÓN\n' +
-                        '2. Selecciona los elementos que quieres\n' +
-                        '3. Presiona "Generate"\n\n' +
-                        'Total de elementos en canvas: ' + allShapes.length
-                      );
-                    }
-                  }}
-                  className="w-full h-10 mt-2 bg-purple-600 text-white hover:bg-purple-700 font-medium rounded-lg"
-                  title="Verificar la selección actual"
-                >
-                  🔍 Ver Selección Actual
-                </Button>
-              </>
-            )}
-            {selectedShapesForMerge.length === 2 && (
-              <div className="mt-2">
-                <p className="text-xs text-gray-500 text-center">
-                  Combine the selected elements into one
-                </p>
-                {isGenerating && (
-                  <p className="text-xs text-purple-600 text-center mt-1 animate-pulse">
-                    Processing merge with AI...
-                  </p>
-                )}
-              </div>
-            )}
-          </div>
-
-          {/* Style Selection - Simplified */}
-          <div>
-            <label className="text-xs font-medium text-gray-700 uppercase tracking-wider">Style</label>
-            <div className="grid grid-cols-2 gap-2 mt-3">
-              {[
-                { id: 'realistic', label: 'Realistic' },
-                { id: 'artistic', label: 'Artistic' },
-                { id: 'minimal', label: 'Minimal' },
-                { id: 'detailed', label: 'Detailed' }
-              ].map(style => (
-                <button
-                  key={style.id}
-                  onClick={() => toggleStyle(style.id)}
-                  className={`py-2 px-3 text-sm rounded-lg border transition-all ${
-                    selectedStyles.includes(style.id)
-                      ? 'border-gray-900 bg-gray-900 text-white'
-                      : 'border-gray-200 hover:border-gray-400 text-gray-700'
-                  }`}
-                >
-                  {style.label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Prompt Input - Simplified */}
-          <div>
-            <label className="text-xs font-medium text-gray-700 uppercase tracking-wider">Prompt</label>
-            <Textarea
-              value={prompt}
-              onChange={(e) => setPrompt(e.target.value)}
-              placeholder="Describe what you want..."
-              className="w-full h-24 resize-none mt-3 border-gray-200 rounded-lg text-sm focus:border-gray-400 focus:ring-0"
-            />
-          </div>
-
-
-
-          {/* Generated Images Gallery */}
-          {generatedImages.length > 0 && (
-            <div>
-              <h3 className="text-sm font-medium mb-2">History</h3>
-              <div className="grid grid-cols-3 gap-2">
-                {generatedImages.slice(-6).map((img, idx) => (
-                  <div
-                    key={idx}
-                    className="relative group cursor-pointer border-2 border-gray-200 rounded-lg overflow-hidden hover:border-purple-400 transition-colors"
-                    onClick={() => addImageToCanvas(img)}
-                  >
-                    <img
-                      src={img}
-                      alt={`Generated ${idx + 1}`}
-                      className="w-full h-24 object-cover"
-                    />
-                    <div className="absolute inset-0 bg-gradient-to-t from-black/50 to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end justify-center pb-1">
-                      <span className="text-white text-xs">Add</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Bottom Actions */}
-        <div className="p-4 border-t border-gray-200 space-y-2">
-          <div className="grid grid-cols-2 gap-2">
-            <Button onClick={handleUndo} variant="outline" size="sm">
-              <Undo className="w-4 h-4 mr-1" />
-              Undo
-            </Button>
-            <Button onClick={handleRedo} variant="outline" size="sm">
-              <Redo className="w-4 h-4 mr-1" />
-              Redo
-            </Button>
-          </div>
-          
-          <div className="grid grid-cols-3 gap-2">
-            <Button onClick={handleZoomIn} variant="outline" size="sm">
-              <ZoomIn className="w-4 h-4" />
-            </Button>
-            <Button onClick={handleZoomOut} variant="outline" size="sm">
-              <ZoomOut className="w-4 h-4" />
-            </Button>
-            <Button onClick={handleZoomToFit} variant="outline" size="sm">
-              <Maximize className="w-4 h-4" />
-            </Button>
-          </div>
-          
-          <Button onClick={exportCanvas} variant="outline" className="w-full">
-            <Download className="w-4 h-4 mr-2" />
-            Export as PNG
-          </Button>
-          
-          <Button
-            onClick={clearCanvas}
-            variant="outline"
-            className="w-full text-red-600 hover:text-red-700 hover:bg-red-50"
-          >
-            <Trash2 className="w-4 h-4 mr-2" />
-            Clear Canvas
-          </Button>
         </div>
       </div>
 
-      {/* Main Canvas Area */}
-      <div className="flex-1 relative bg-gray-100">
-        <div className="absolute inset-0">
-          <Tldraw 
+      {/* Main Content */}
+      <div className="flex-1 flex overflow-hidden">
+        {/* Canvas */}
+        <div className="flex-1 relative">
+          <Tldraw
             onMount={handleMount}
             persistenceKey="nanobanan-tldraw"
           />
         </div>
         
-        {/* Instructions Overlay */}
-        <div className="absolute top-4 left-1/2 transform -translate-x-1/2 bg-white/90 px-4 py-2 rounded-full text-sm text-gray-700 pointer-events-none shadow-md">
-          ✏️ Draw → 🎨 Generate → 🔄 Iterate
-        </div>
-        
-        {/* Watermark */}
-        <div className="absolute bottom-4 right-4 bg-white/90 px-3 py-1 rounded-full text-xs text-gray-600 pointer-events-none">
-          Powered by TLDraw + Gemini
+        {/* Right Sidebar */}
+        <div className="w-80 bg-white border-l border-gray-200 flex flex-col overflow-y-auto">
+          <div className="p-4 space-y-4">
+            
+            {/* Merge Mode Indicator */}
+            {selectedShapesForMerge.length === 2 && (
+              <div className={`rounded-lg p-3 transition-colors ${
+                isGenerating ? 'bg-blue-100 animate-pulse' : 'bg-blue-50'
+              }`}>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="text-sm font-medium text-blue-900">
+                      {isGenerating ? 'Merging...' : 'Merge Mode'}
+                    </div>
+                    <div className="text-xs text-blue-600 mt-1">
+                      {isGenerating ? 'AI is combining your elements' : '2 elements selected'}
+                    </div>
+                  </div>
+                  <button 
+                    onClick={() => {
+                      setSelectedShapesForMerge([]);
+                      if (editorRef.current) {
+                        editorRef.current.setSelectedShapes([]);
+                      }
+                    }}
+                    className="text-xs text-blue-600 hover:text-blue-800"
+                    disabled={isGenerating}
+                  >
+                    {isGenerating ? 'Processing...' : 'Cancel'}
+                  </button>
+                </div>
+              </div>
+            )}
+            
+            {/* Generation Controls */}
+            <div>
+              {selectedShapesForMerge.length === 2 ? (
+                <Button
+                  onClick={mergeSelectedShapes}
+                  disabled={isGenerating}
+                  className="w-full h-12 bg-blue-600 text-white hover:bg-blue-700 font-medium rounded-lg"
+                >
+                  {isGenerating ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      Merging...
+                    </>
+                  ) : (
+                    'Merge Selected'
+                  )}
+                </Button>
+              ) : (
+                <>
+                  <Button
+                    onClick={generateFromCanvas}
+                    disabled={isGenerating}
+                    className="w-full h-12 bg-black text-white hover:bg-gray-800 font-medium rounded-lg"
+                  >
+                    {isGenerating ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        Generating...
+                      </>
+                    ) : (
+                      editorRef.current && editorRef.current.getSelectedShapes().length > 0 
+                        ? `Generate from ${editorRef.current.getSelectedShapes().length} selected`
+                        : 'Generate from All'
+                    )}
+                  </Button>
+                  
+                  {/* Test Button */}
+                  <Button
+                    onClick={generateImage}
+                    disabled={isGenerating || !prompt.trim()}
+                    className="w-full h-10 mt-2 bg-green-600 text-white hover:bg-green-700 font-medium rounded-lg"
+                    title="Generate image from prompt only (without canvas)"
+                  >
+                    {isGenerating ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        Testing...
+                      </>
+                    ) : (
+                      'Test API (Prompt Only)'
+                    )}
+                  </Button>
+                  
+                  {/* Diagnostic Button for Two-Image Approach */}
+                  <Button
+                    onClick={() => {
+                      console.log('🔍 DIAGNÓSTICO: Verificando selección ACTUAL...');
+                      
+                      if (!editorRef.current) {
+                        console.error('Editor no está listo todavía. Por favor espera un momento.');
+                        return;
+                      }
+                      
+                      const currentSelection = editorRef.current.getSelectedShapes();
+                      
+                      if (currentSelection.length > 0) {
+                        const types = currentSelection.map(s => s.type);
+                        const uniqueTypes = [...new Set(types)];
+                        
+                        console.log('✅ Shapes seleccionados:', currentSelection);
+                        console.log('📊 Tipos:', uniqueTypes);
+                        
+                        console.error(
+                          `✅ ${currentSelection.length} ELEMENTOS SELECCIONADOS\n\n` +
+                          `Tipos: ${uniqueTypes.join(', ')}\n\n` +
+                          `Al presionar "Generate":\n` +
+                          `• Se exportará SOLO la selección actual\n` +
+                          `• Gemini convertirá estos elementos en una imagen realista\n\n` +
+                          `💡 TIP: Usa la herramienta de selección para elegir exactamente qué quieres generar`
+                        );
+                      } else {
+                        console.log('⚠️ No hay selección');
+                        
+                        const allShapes = editorRef.current.getCurrentPageShapes();
+                        console.log('📊 Total shapes en canvas:', allShapes.length);
+                        
+                        console.error(
+                          '⚠️ NO HAY SELECCIÓN\n\n' +
+                          'Al presionar "Generate" se usará TODO el canvas\n\n' +
+                          '💡 Para generar solo parte del canvas:\n' +
+                          '1. Usa la herramienta de SELECCIÓN\n' +
+                          '2. Selecciona los elementos que quieres\n' +
+                          '3. Presiona "Generate"\n\n' +
+                          'Total de elementos en canvas: ' + allShapes.length
+                        );
+                      }
+                    }}
+                    className="w-full h-10 mt-2 bg-blue-600 text-white hover:bg-blue-700 font-medium rounded-lg"
+                    title="Verificar la selección actual"
+                  >
+                    Ver Selección Actual
+                  </Button>
+                </>
+              )}
+              {selectedShapesForMerge.length === 2 && (
+                <div className="mt-2">
+                  <p className="text-xs text-gray-500 text-center">
+                    Combine the selected elements into one
+                  </p>
+                  {isGenerating && (
+                    <p className="text-xs text-blue-600 text-center mt-1 animate-pulse">
+                      Processing merge with AI...
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+            
+            {/* Style Selection */}
+            <div>
+              <Label className="text-xs font-medium text-gray-700 uppercase tracking-wider">Art Style</Label>
+              <div className="grid grid-cols-2 gap-2 mt-2">
+                {[
+                  { id: 'realistic', label: 'Realistic' },
+                  { id: 'anime', label: 'Anime' },
+                  { id: 'oil_painting', label: 'Oil Paint' },
+                  { id: 'watercolor', label: 'Watercolor' },
+                  { id: 'sketch', label: 'Sketch' },
+                  { id: 'digital_art', label: 'Digital' },
+                  { id: 'pixel_art', label: 'Pixel Art' },
+                  { id: 'detailed', label: 'Detailed' }
+                ].map(style => (
+                  <button
+                    key={style.id}
+                    onClick={() => toggleStyle(style.id)}
+                    className={`py-2 px-3 text-sm rounded-lg border transition-all ${
+                      selectedStyles.includes(style.id)
+                        ? 'border-gray-900 bg-gray-900 text-white'
+                        : 'border-gray-200 hover:border-gray-400 text-gray-700'
+                    }`}
+                  >
+                    {style.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Prompt Input - Simplified */}
+            <div>
+              <Label className="text-xs font-medium text-gray-700 uppercase tracking-wider">Prompt</Label>
+              <Textarea
+                value={prompt}
+                onChange={(e) => setPrompt(e.target.value)}
+                placeholder="Describe your image or leave blank for auto-description"
+                className="mt-2 min-h-[80px] text-sm"
+                disabled={isGenerating}
+              />
+            </div>
+            
+            {/* Generated Images Gallery */}
+            {generatedImages.length > 0 && (
+              <div>
+                <Label className="text-xs font-medium text-gray-700 uppercase tracking-wider">History</Label>
+                <div className="grid grid-cols-3 gap-2 mt-2">
+                  {generatedImages.slice(-6).map((img, idx) => (
+                    <div
+                      key={idx}
+                      className="relative group cursor-pointer border-2 border-gray-200 rounded-lg overflow-hidden hover:border-blue-400 transition-colors"
+                      onClick={() => addImageFromGallery(img)}
+                    >
+                      <img
+                        src={img}
+                        alt={`Generated ${idx + 1}`}
+                        className="w-full h-20 object-cover"
+                      />
+                      <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-10 transition-all" />
+                      <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                        <div className="bg-white rounded-full p-1">
+                          <ImageIcon className="h-4 w-4 text-gray-700" />
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       </div>
+      
+      {/* Instructions Overlay */}
+      <div className="absolute top-4 left-1/2 transform -translate-x-1/2 bg-white/90 px-4 py-2 rounded-full text-sm text-gray-700 pointer-events-none shadow-md">
+        Dibujar → Generar → Repetir
+      </div>
+      
     </div>
   );
 }

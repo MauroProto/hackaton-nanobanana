@@ -10,11 +10,11 @@ export interface GeminiSettings {
   creativity?: number;
 }
 
-export type GeminiPromptType = 'generate' | 'edit';
+export type GeminiPromptType = 'generate' | 'edit' | 'enhance' | 'create' | 'combine';
 
 // Tipos para la integración con Gemini 2.5 Flash Image
 export interface GeminiImageRequest {
-  mode: 'generate' | 'edit';
+  mode: 'generate' | 'edit' | 'enhance' | 'create' | 'combine';
   user_prompt: string;
   base_image?: Blob | null;
   mask_image?: Blob | null;

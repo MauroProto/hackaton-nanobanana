@@ -1,4 +1,5 @@
 import React, { useState, useCallback, useMemo, useEffect } from 'react';
+import * as fabric from 'fabric';
 import { 
   Sparkles, 
   Image, 
@@ -24,7 +25,7 @@ import {
 import { CollapsibleSection } from './ui/CollapsibleSection';
 import { HistoryPanel } from './HistoryPanel';
 import { GeminiPromptType, CanvasLayer } from '../types';
-import { smartGenerate, analyzeCanvasContext } from '../lib/gemini';
+import { smartGenerate, analyzeCanvasContext, filterDrawingObjects, createDrawingOnlyCanvas } from '../lib/gemini';
 import { LayeredCanvasManager } from '../lib/canvas-layers';
 import { useNanoBananaToasts } from '../hooks/useToast';
 
@@ -123,7 +124,7 @@ const RightPanel: React.FC = React.memo(() => {
         seed: seed || undefined
       };
       
-      // SIEMPRE capturar el estado actual del canvas
+      // SIEMPRE capturar el estado actual del canvas - SOLO DIBUJOS NUEVOS
       let canvasImage: Blob | null = null;
       
       if (canvasManager) {
@@ -132,15 +133,28 @@ const RightPanel: React.FC = React.memo(() => {
         // Si es LayeredCanvasManager, usar exportForNanoBanana
         if (canvasManager instanceof LayeredCanvasManager) {
           const canvasExport = await canvasManager.exportForNanoBanana();
-          canvasImage = canvasExport.baseImage || canvasExport.drawingLayer || null;
+          // Preferir drawingLayer (dibujos nuevos) sobre baseImage (imagen previa)
+          canvasImage = canvasExport.drawingLayer || canvasExport.baseImage || null;
         } else if (typeof canvasManager.exportCanvas === 'function') {
           // Si tiene método exportCanvas, usarlo
           canvasImage = await canvasManager.exportCanvas();
-        } else if (fabricCanvas) {
-          // Si hay fabric canvas, exportarlo directamente
-          const dataUrl = fabricCanvas.toDataURL({ format: 'png' });
-          const response = await fetch(dataUrl);
-          canvasImage = await response.blob();
+        } else {
+          // Obtener fabricCanvas del store
+          const fabricCanvas = useAppStore.getState().canvas.fabricCanvas;
+          if (fabricCanvas) {
+            console.log('🔍 Filtrando solo dibujos del usuario...');
+            
+            // Usar función auxiliar para filtrar objetos de dibujo
+            const drawingObjects = filterDrawingObjects(fabricCanvas.getObjects());
+            
+            if (drawingObjects.length > 0) {
+              // Usar función auxiliar para crear canvas temporal
+              canvasImage = await createDrawingOnlyCanvas(fabricCanvas, drawingObjects);
+            } else {
+              console.log('ℹ️ No hay dibujos nuevos, solo imágenes previas');
+              canvasImage = null;
+            }
+          }
         }
         
         console.log('✅ Imagen capturada del canvas:', canvasImage ? 'Sí' : 'No');
@@ -328,16 +342,16 @@ const RightPanel: React.FC = React.memo(() => {
       <CollapsibleSection title="Generación con IA">
         <div className="space-y-4">
           {/* Smart Mode Toggle */}
-          <div className="bg-gradient-to-r from-purple-50 to-blue-50 p-3 rounded-lg border border-purple-200">
+          <div className="bg-gradient-to-r from-blue-50 to-indigo-50 p-3 rounded-lg border border-blue-200">
             <div className="flex items-center justify-between mb-2">
               <div className="flex items-center space-x-2">
-                <Brain className="h-4 w-4 text-purple-600" />
-                <span className="text-xs font-semibold text-purple-700">Modo Inteligente</span>
+                <Brain className="h-4 w-4 text-blue-600" />
+                <span className="text-xs font-semibold text-blue-700">Modo Inteligente</span>
               </div>
               <button
                 onClick={() => setSmartMode(!smartMode)}
                 className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
-                  smartMode ? 'bg-purple-600' : 'bg-gray-300'
+                  smartMode ? 'bg-blue-600' : 'bg-gray-300'
                 }`}
               >
                 <span
@@ -348,14 +362,14 @@ const RightPanel: React.FC = React.memo(() => {
               </button>
             </div>
             {smartMode && (
-              <div className="text-xs text-purple-600">
+              <div className="text-xs text-blue-600">
                 <div className="flex items-center space-x-1">
                   <Zap className="h-3 w-3" />
                   <span className="font-medium">Detección automática:</span>
-                  <span className="text-purple-800 font-semibold">{detectedMode || 'Analizando...'}</span>
+                  <span className="text-blue-800 font-semibold">{detectedMode || 'Analizando...'}</span>
                 </div>
                 {canvasAnalysis && (
-                  <div className="mt-1 text-purple-500">
+                  <div className="mt-1 text-blue-500">
                     {canvasAnalysis.workflow_suggestion.next_step}
                   </div>
                 )}
@@ -420,7 +434,7 @@ const RightPanel: React.FC = React.memo(() => {
             disabled={(!smartMode && !customPrompt.trim()) || isGenerating}
             className={`w-full flex items-center justify-center space-x-2 px-4 py-2 text-white text-sm font-medium rounded-md transition-all ${
               smartMode 
-                ? 'bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700' 
+                ? 'bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700' 
                 : 'bg-blue-600 hover:bg-blue-700'
             } disabled:bg-gray-400`}
           >
@@ -438,7 +452,7 @@ const RightPanel: React.FC = React.memo(() => {
                 )}
                 <span>
                   {smartMode 
-                    ? '🍌 Generar con Nano Banana' 
+                    ? 'Generar con Nano Banana' 
                     : (promptType === 'generate' ? 'Generar' : 'Editar')}
                 </span>
               </>
@@ -448,7 +462,7 @@ const RightPanel: React.FC = React.memo(() => {
           {/* Prompt Suggestions */}
           <div>
             <label className="block text-xs font-medium text-gray-700 mb-2">
-              {smartMode ? '✨ Sugerencias Inteligentes' : 'Sugerencias'}
+              {smartMode ? 'Sugerencias Inteligentes' : 'Sugerencias'}
             </label>
             <div className="space-y-1 max-h-32 overflow-y-auto">
               {(Array.isArray(promptSuggestions) ? promptSuggestions : promptSuggestions[promptType] || []).map((suggestion, index) => (
@@ -457,7 +471,7 @@ const RightPanel: React.FC = React.memo(() => {
                   onClick={() => handleSuggestionClick(suggestion)}
                   className={`w-full text-left px-2 py-1 text-xs rounded border transition-colors ${
                     smartMode 
-                      ? 'text-purple-700 hover:bg-purple-50 border-purple-200' 
+                      ? 'text-blue-700 hover:bg-blue-50 border-blue-200' 
                       : 'text-gray-600 hover:bg-gray-100 border-gray-200'
                   }`}
                 >

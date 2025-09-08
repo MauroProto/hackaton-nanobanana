@@ -68,7 +68,7 @@ const VersionNode: React.FC<VersionNodeProps> = ({
       <div 
         className={`relative flex items-center space-x-2 p-2 rounded-lg transition-all cursor-pointer ${
           isCurrentVersion 
-            ? 'bg-purple-100 border border-purple-300' 
+            ? 'bg-blue-100 border border-blue-300' 
             : 'hover:bg-gray-50'
         }`}
         style={{ marginLeft: `${depth * 24}px` }}
@@ -120,11 +120,11 @@ const VersionNode: React.FC<VersionNodeProps> = ({
         {/* Información de la versión */}
         <div className="flex-1 min-w-0">
           <p className={`text-sm font-medium truncate ${
-            isCurrentVersion ? 'text-purple-700' : 'text-gray-900'
+            isCurrentVersion ? 'text-blue-700' : 'text-gray-900'
           }`}>
             {version.name}
             {isCurrentVersion && (
-              <span className="ml-2 text-xs bg-purple-200 px-1.5 py-0.5 rounded">
+              <span className="ml-2 text-xs bg-blue-200 px-1.5 py-0.5 rounded">
                 Actual
               </span>
             )}
@@ -264,7 +264,7 @@ export const VersionTreeComponent: React.FC = () => {
       {/* Header */}
       <div className="px-4 py-3 border-b flex items-center justify-between">
         <div className="flex items-center space-x-2">
-          <GitBranch className="h-4 w-4 text-purple-600" />
+          <GitBranch className="h-4 w-4 text-blue-600" />
           <h3 className="text-sm font-semibold text-gray-900">
             Árbol de Versiones
           </h3>

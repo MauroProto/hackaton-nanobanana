@@ -218,7 +218,7 @@ function AppSimple() {
             </defs>
             <rect width="512" height="512" fill="url(#grad1)"/>
             <text x="50%" y="45%" text-anchor="middle" fill="white" font-size="28" font-weight="bold">
-              🍌 Nano Banana
+              Nano Banana
             </text>
             <text x="50%" y="55%" text-anchor="middle" fill="white" font-size="18">
               ${fullPrompt.substring(0, 30)}...
@@ -324,7 +324,7 @@ function AppSimple() {
               className={`p-3 rounded hover:bg-gray-100 transition-colors ${currentTool === 'pen' ? 'bg-blue-100 ring-2 ring-blue-400' : ''}`}
               title="Lápiz"
             >
-              ✏️
+              Texto
             </button>
             <button
               onClick={() => setCurrentTool('eraser')}
@@ -338,7 +338,7 @@ function AppSimple() {
               className="p-3 rounded hover:bg-gray-100 transition-colors"
               title="Agregar cuadrado"
             >
-              ◻️
+              Rect
             </button>
             <button
               onClick={addText}
@@ -353,7 +353,7 @@ function AppSimple() {
                 className="p-3 rounded hover:bg-red-100 transition-colors"
                 title="Limpiar todo"
               >
-                🗑️
+                Limpiar
               </button>
             </div>
           </div>
@@ -378,7 +378,7 @@ function AppSimple() {
 
         {/* Panel Derecho - Prompts y Presets */}
         <div className="absolute right-2 top-1/2 -translate-y-1/2 w-80 bg-white rounded-lg shadow-xl p-4 z-10">
-          <h3 className="font-bold text-lg mb-4">🍌 Nano Banana</h3>
+          <h3 className="font-bold text-lg mb-4">Nano Banana</h3>
           
           {/* Área de prompt */}
           <textarea
@@ -426,7 +426,7 @@ function AppSimple() {
             disabled={isGenerating}
             className="w-full py-3 bg-gradient-to-r from-yellow-400 to-orange-500 text-white font-bold rounded-lg hover:from-yellow-500 hover:to-orange-600 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {isGenerating ? '⏳ Generando...' : '🍌 GENERAR'}
+            {isGenerating ? 'Generando...' : 'GENERAR'}
           </button>
           
           <p className="text-xs text-gray-500 mt-2 text-center">

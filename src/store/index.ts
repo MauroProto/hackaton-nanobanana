@@ -473,24 +473,37 @@ export const useAppStore = create<AppStore>()(devtools(
               throw new Error(configValidation.error || 'Configuración de Gemini inválida');
             }
             
-            // Importar dinámicamente la función de Gemini
-            const { generateWithGemini, canvasToBlob } = await import('../lib/gemini');
+            // Importar dinámicamente las funciones de Gemini
+            const { generateWithGemini, canvasToBlob, filterDrawingObjects, createDrawingOnlyCanvas } = await import('../lib/gemini');
             
-            // IMPORTANTE: Capturar el contenido actual del canvas como imagen base
+            // IMPORTANTE: Capturar SOLO los dibujos nuevos del usuario (no imágenes previas)
             const { canvas: { fabricCanvas }, canvasManager } = get();
             let baseImage: Blob | null = null;
             
             if (fabricCanvas && fabricCanvas.getObjects().length > 0) {
-              // Si hay contenido en el canvas, usarlo como referencia
-              console.log('Capturando contenido del canvas como referencia para la IA...');
+              console.log('🔍 Analizando contenido del canvas...');
               
-              // Usar CanvasManager para optimizar la captura si está disponible
-              if (canvasManager) {
-                canvasManager.forceRender();
+              // Usar función auxiliar para filtrar objetos de dibujo
+              const drawingObjects = filterDrawingObjects(fabricCanvas.getObjects());
+              
+              console.log(`📊 Total objetos: ${fabricCanvas.getObjects().length}, Dibujos: ${drawingObjects.length}`);
+              
+              if (drawingObjects.length > 0) {
+                // Solo capturar si hay dibujos reales del usuario
+                console.log('✏️ Capturando SOLO los dibujos del usuario...');
+                
+                // Forzar render antes de capturar
+                if (canvasManager) {
+                  canvasManager.forceRender();
+                }
+                
+                // Usar función auxiliar para crear canvas temporal
+                baseImage = await createDrawingOnlyCanvas(fabricCanvas, drawingObjects);
+                console.log('✅ Dibujos del usuario capturados:', baseImage?.size, 'bytes');
+              } else {
+                console.log('ℹ️ No hay dibujos nuevos del usuario, solo imágenes previas');
+                baseImage = null; // No usar imagen base si solo hay imágenes previas
               }
-              
-              baseImage = await canvasToBlob(fabricCanvas);
-              console.log('Canvas capturado como imagen base:', baseImage?.size, 'bytes');
             }
             
             // Crear la request para Gemini
@@ -594,7 +607,7 @@ export const useAppStore = create<AppStore>()(devtools(
                 canvasManager.forceRender();
               }
               
-              baseImage = await canvasToBlob(fabricCanvas);
+              baseImage = await canvasToBlob(fabricCanvas, true); // Solo dibujos
             }
             
             // Crear la request para Gemini

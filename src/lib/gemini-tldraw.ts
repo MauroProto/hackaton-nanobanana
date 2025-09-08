@@ -156,12 +156,7 @@ async function generateImageFromPrompt(
     ctx.fillText(line, width / 2, startY + index * 30);
   });
   
-  // Agregar marca de agua
-  ctx.font = '14px Arial';
-  ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
-  ctx.textAlign = 'right';
-  ctx.textBaseline = 'bottom';
-  ctx.fillText('AI Generated (Demo)', width - 10, height - 10);
+  // Marca de agua eliminada
   
   // Convertir a base64
   return canvas.toDataURL('image/png').split(',')[1];

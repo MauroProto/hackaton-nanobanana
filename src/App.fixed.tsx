@@ -15,9 +15,9 @@ function AppFixed() {
         <div className="w-64 bg-white border-r border-gray-200 p-4">
           <h2 className="font-medium mb-2">Herramientas</h2>
           <div className="space-y-2">
-            <button className="w-full px-3 py-2 text-left hover:bg-gray-100 rounded">🖌️ Pincel</button>
-            <button className="w-full px-3 py-2 text-left hover:bg-gray-100 rounded">🧹 Goma</button>
-            <button className="w-full px-3 py-2 text-left hover:bg-gray-100 rounded">✏️ Texto</button>
+            <button className="w-full px-3 py-2 text-left hover:bg-gray-100 rounded">Pincel</button>
+            <button className="w-full px-3 py-2 text-left hover:bg-gray-100 rounded">Goma</button>
+            <button className="w-full px-3 py-2 text-left hover:bg-gray-100 rounded">Texto</button>
           </div>
         </div>
         
@@ -42,8 +42,8 @@ function AppFixed() {
                 placeholder="Describe tu imagen..."
               />
             </div>
-            <button className="w-full py-2 bg-purple-600 text-white rounded hover:bg-purple-700">
-              🍌 Generar con Nano Banana
+            <button className="w-full py-2 bg-blue-600 text-white rounded hover:bg-blue-700">
+              Generar con Nano Banana
             </button>
           </div>
         </div>

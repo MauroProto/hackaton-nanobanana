@@ -42,7 +42,7 @@ const PRESET_COLORS = [
   '#FF00FF', // Magenta
   '#00FFFF', // Cyan
   '#FFA500', // Naranja
-  '#800080', // Púrpura
+  '#1E40AF', // Azul
   '#FFC0CB', // Rosa
   '#A52A2A', // Marrón
 ];
