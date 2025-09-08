@@ -34,18 +34,18 @@ export default function AppTldrawWorking() {
   const handleMount = useCallback((editor: Editor) => {
     editorRef.current = editor;
     editor.setCurrentTool('draw');
-    console.log('✅ Editor montado y listo');
+    console.log('✅ Editor mounted and ready');
   }, []);
 
   // FUNCIÓN DE GENERACIÓN SIMPLIFICADA QUE FUNCIONA
   const generateFromCanvas = async () => {
     console.log('🚀 === INICIANDO GENERACIÓN ===');
     setError('');
-    setStatus('Preparando canvas...');
+    setStatus('Preparing canvas...');
     
     if (!editorRef.current) {
-      setError('Editor no está listo');
-      console.error('❌ Editor no está listo');
+      setError('Editor not ready');
+      console.error('❌ Editor not ready');
       return;
     }
 
@@ -55,21 +55,21 @@ export default function AppTldrawWorking() {
 
     try {
       // Obtener shapes para exportar
-      setStatus('Obteniendo dibujos...');
+      setStatus('Getting drawings...');
       const selectedShapes = editor.getSelectedShapes();
       const shapesToExport = selectedShapes.length > 0 
         ? selectedShapes 
         : editor.getCurrentPageShapes();
       
       if (shapesToExport.length === 0) {
-        setError('No hay nada dibujado en el canvas');
+        setError('Nothing drawn on canvas');
         console.error('❌ No hay shapes para exportar');
         setIsGenerating(false);
         return;
       }
 
-      console.log(`📊 Exportando ${shapesToExport.length} elementos`);
-      setStatus(`Exportando ${shapesToExport.length} elementos...`);
+      console.log(`📊 Exporting ${shapesToExport.length} elements`);
+      setStatus(`Exporting ${shapesToExport.length} elements...`);
 
       // Exportar a blob
       const blob = await exportToBlob({
@@ -85,14 +85,14 @@ export default function AppTldrawWorking() {
       });
 
       if (!blob) {
-        setError('Error al exportar el canvas');
+        setError('Error exporting canvas');
         console.error('❌ No se pudo exportar el canvas');
         setIsGenerating(false);
         return;
       }
 
-      console.log('✅ Canvas exportado, tamaño:', blob.size);
-      setStatus('Canvas exportado, preparando para generar...');
+      console.log('✅ Canvas exported, size:', blob.size);
+      setStatus('Canvas exported, preparing to generate...');
 
       // Convertir a base64
       const reader = new FileReader();
@@ -100,12 +100,12 @@ export default function AppTldrawWorking() {
         const base64 = reader.result as string;
         const cleanBase64 = base64.split(',')[1];
         
-        console.log('📤 Enviando a Gemini API...');
-        setStatus('Generando imagen con IA...');
+        console.log('📤 Sending to Gemini API...');
+        setStatus('Generating image with AI...');
 
         try {
           // USAR EL MODELO CORRECTO: gemini-2.5-flash-image-preview
-          setStatus('🍌 Generando imagen con Nano Banana...');
+          setStatus('🍌 Generating image with Nano Banana...');
           
           const result = await generateImageWithNanoBanana(
             base64, // Ya tiene data:image/png;base64, completo
@@ -116,7 +116,7 @@ export default function AppTldrawWorking() {
           if (result.success && result.imageBase64) {
             // IMAGEN GENERADA EXITOSAMENTE
             console.log('✅ ¡Imagen generada por Nano Banana!');
-            setStatus('Procesando imagen generada...');
+            setStatus('Processing generated image...');
             
             // Convertir a data URL
             const imageUrl = `data:image/png;base64,${result.imageBase64}`;
@@ -127,7 +127,7 @@ export default function AppTldrawWorking() {
             // Agregar a la galería
             setGeneratedImages(prev => [...prev, imageUrl]);
             
-            setStatus('✅ ¡Imagen generada correctamente!');
+            setStatus('✅ Image generated successfully!');
             setError(''); // Limpiar errores previos
           } else {
             // Error en la generación
@@ -228,7 +228,7 @@ export default function AppTldrawWorking() {
     const allShapes = editor.getCurrentPageShapes();
     
     if (allShapes.length === 0) {
-      setStatus('El lienzo ya está vacío');
+      setStatus('Canvas is already empty');
       setTimeout(() => setStatus(''), 2000);
       return;
     }
@@ -242,8 +242,8 @@ export default function AppTldrawWorking() {
     // Resetear la herramienta a dibujo
     editor.setCurrentTool('draw');
     
-    setStatus('✅ Lienzo limpiado');
-    console.log('🗑️ Lienzo completamente limpiado');
+    setStatus('✅ Canvas cleared');
+    console.log('🗑️ Canvas completely cleared');
     
     setTimeout(() => setStatus(''), 2000);
   };
@@ -252,7 +252,7 @@ export default function AppTldrawWorking() {
   const exportCanvas = async () => {
     if (!editorRef.current) return;
 
-    setStatus('Exportando canvas...');
+    setStatus('Exporting canvas...');
     
     try {
       const blob = await exportToBlob({
@@ -273,12 +273,12 @@ export default function AppTldrawWorking() {
         a.download = 'nano-banana-canvas.png';
         a.click();
         URL.revokeObjectURL(url);
-        setStatus('✅ Canvas exportado');
+        setStatus('✅ Canvas exported');
         setTimeout(() => setStatus(''), 2000);
       }
     } catch (error) {
       console.error('Error exportando:', error);
-      setError('Error al exportar');
+      setError('Export error');
     }
   };
 
@@ -300,7 +300,7 @@ export default function AppTldrawWorking() {
     <div className="w-full h-screen flex flex-col bg-gray-50">
       {/* Header */}
       <div className="flex items-center justify-between p-4 bg-white border-b border-gray-200">
-        <h1 className="text-xl font-bold">🍌 Nano Banana Lienzo</h1>
+        <h1 className="text-xl font-bold">🍌 Nano Banana Canvas</h1>
         
         <div className="flex items-center space-x-2">
           {/* Status Message */}
@@ -325,12 +325,12 @@ export default function AppTldrawWorking() {
           
           <Button onClick={exportCanvas} variant="outline" size="sm">
             <Download className="h-4 w-4 mr-2" />
-            Exportar
+            Export
           </Button>
           
           <Button onClick={clearCanvas} variant="outline" size="sm" className="text-red-600 hover:bg-red-50">
             <Trash2 className="h-4 w-4 mr-2" />
-            Limpiar Lienzo
+            Clear Canvas
           </Button>
         </div>
       </div>
@@ -346,7 +346,7 @@ export default function AppTldrawWorking() {
             <div className="absolute inset-0 bg-black bg-opacity-30 flex items-center justify-center z-50">
               <div className="bg-white rounded-lg p-6 flex flex-col items-center space-y-4">
                 <Loader2 className="h-12 w-12 animate-spin text-blue-600" />
-                <p className="text-lg font-medium">Generando imagen...</p>
+                <p className="text-lg font-medium">Generating image...</p>
                 <p className="text-sm text-gray-600">{status}</p>
               </div>
             </div>
@@ -365,34 +365,34 @@ export default function AppTldrawWorking() {
             {isGenerating ? (
               <>
                 <Loader2 className="w-5 h-5 mr-2 animate-spin" />
-                Generando...
+                Generating...
               </>
             ) : (
               <>
                 <Wand2 className="w-5 h-5 mr-2" />
-                Generar Imagen
+                Generate Image
               </>
             )}
           </Button>
 
           {/* Styles */}
           <div>
-            <Label className="text-xs font-medium uppercase">Estilo</Label>
+            <Label className="text-xs font-medium uppercase">Style</Label>
             <div className="grid grid-cols-2 gap-2 mt-2">
               {[
-                { id: 'realistic', label: 'Realista' },
+                { id: 'realistic', label: 'Realistic' },
                 { id: 'anime', label: 'Anime' },
-                { id: 'oil_painting', label: 'Óleo' },
-                { id: 'watercolor', label: 'Acuarela' },
-                { id: 'sketch', label: 'Boceto' },
-                { id: 'digital_art', label: 'Digital' }
+                { id: 'oil_painting', label: 'Oil Painting' },
+                { id: 'watercolor', label: 'Watercolor' },
+                { id: 'sketch', label: 'Sketch' },
+                { id: 'digital_art', label: 'Digital Art' }
               ].map(style => (
                 <button
                   key={style.id}
                   onClick={() => toggleStyle(style.id)}
                   className={`py-2 px-3 text-sm rounded-lg border transition-all ${
                     selectedStyles.includes(style.id)
-                      ? 'border-violet-600 bg-violet-600 text-white'
+                      ? 'border-violet-600 bg-violet-600 text-white hover:bg-violet-700'
                       : 'border-blue-500 bg-blue-50 text-blue-700 hover:bg-blue-100'
                   }`}
                 >
@@ -404,11 +404,11 @@ export default function AppTldrawWorking() {
 
           {/* Prompt */}
           <div>
-            <Label className="text-xs font-medium uppercase">Prompt (Opcional)</Label>
+            <Label className="text-xs font-medium uppercase">Prompt (Optional)</Label>
             <Textarea
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
-              placeholder="Describe qué quieres generar..."
+              placeholder="Describe what you want to generate..."
               className="mt-2 min-h-[80px] text-sm"
               disabled={isGenerating}
             />
@@ -418,12 +418,12 @@ export default function AppTldrawWorking() {
           {generatedImages.length > 0 && (
             <div>
               <div className="flex items-center justify-between mb-2">
-                <Label className="text-xs font-medium uppercase">Historial</Label>
+                <Label className="text-xs font-medium uppercase">History</Label>
                 <button
                   onClick={() => setGeneratedImages([])}
                   className="text-xs text-red-600 hover:text-red-700"
                 >
-                  Limpiar
+                  Clear
                 </button>
               </div>
               <div className="grid grid-cols-3 gap-2">
