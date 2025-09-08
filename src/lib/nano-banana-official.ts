@@ -52,17 +52,19 @@ export async function generateImageWithNanoBanana(
     }
     
     // Agregar instrucciones específicas para mejorar la generación
-    fullPrompt += `. CRITICAL REQUIREMENTS:
-    - Fill the ENTIRE frame edge-to-edge
-    - NO black bars, NO white borders, NO letterboxing, NO pillarboxing
-    - The image must extend to ALL four edges of the canvas
-    - Do NOT add any borders, frames, or empty spaces around the image
-    - Make the content fill 100% of the available space
-    - If the sketch has empty areas, extend the scene to fill them
-    - Maintain the composition from the original sketch
-    - Add realistic details, textures, and professional lighting
-    - Make it visually stunning and detailed
-    - IMPORTANT: The final image must be perfectly cropped without ANY borders`;
+    fullPrompt += `. CRITICAL REQUIREMENTS FOR OUTPUT IMAGE:
+    - The generated image must fill the ENTIRE canvas from edge to edge
+    - ABSOLUTELY NO black bars, NO white padding, NO borders of ANY kind
+    - NO letterboxing (black bars on top/bottom)
+    - NO pillarboxing (black bars on sides)
+    - If the input sketch doesn't fill the frame, EXTEND and EXPAND the content
+    - Generate content that bleeds to ALL four edges
+    - The output dimensions must match input dimensions exactly
+    - Fill 100% of the canvas with actual image content
+    - Do NOT add any framing or padding around the generated content
+    - Crop the output tight to the edges with zero margins
+    - Treat the entire canvas as active image area
+    - Add realistic details, textures, and professional lighting throughout`;
     
     console.log('📝 Prompt:', fullPrompt);
     console.log('📊 Sketch size:', cleanBase64.length);
@@ -179,13 +181,17 @@ export async function editImageWithNanoBanana(
     }
     
     // Agregar instrucciones para preservar el resto y evitar bordes
-    editPrompt += `. CRITICAL REQUIREMENTS:
+    editPrompt += `. CRITICAL OUTPUT REQUIREMENTS:
     - Preserve everything else in the image except for the specific changes requested
     - Maintain the original style, lighting, and perspective
-    - Fill the ENTIRE frame edge-to-edge
-    - NO black bars, NO white borders, NO letterboxing, NO pillarboxing
-    - The edited image must extend to ALL four edges without ANY borders
-    - Keep the image perfectly cropped as the original`;
+    - The edited image MUST fill the entire canvas edge-to-edge
+    - ABSOLUTELY NO black bars or padding (top, bottom, left, or right)
+    - NO letterboxing or pillarboxing - zero tolerance
+    - If any empty space appears, EXTEND the image content to fill it
+    - Output dimensions must match input dimensions exactly
+    - The final image must touch all four edges with actual content
+    - Do NOT add ANY framing, borders, or margins
+    - Export cropped tight to the content with no empty areas`;
     
     console.log('📝 Edit prompt:', editPrompt);
     

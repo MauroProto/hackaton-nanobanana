@@ -71,14 +71,14 @@ export default function AppTldrawWorking() {
       console.log(`📊 Exporting ${shapesToExport.length} elements`);
       setStatus(`Exporting ${shapesToExport.length} elements...`);
 
-      // Exportar a blob
+      // Exportar a blob SIN PADDING
       const blob = await exportToBlob({
         editor,
         ids: shapesToExport.map(s => s.id),
         format: 'png',
         opts: {
-          background: true,
-          padding: 20,
+          background: true,  // Con fondo blanco
+          padding: 0,        // SIN PADDING - exporta exactamente el contenido
           scale: 1,
           darkMode: false
         }
@@ -260,8 +260,8 @@ export default function AppTldrawWorking() {
         ids: Array.from(editorRef.current.getCurrentPageShapeIds()),
         format: 'png',
         opts: {
-          background: true,
-          padding: 20,
+          background: true,  // Con fondo blanco
+          padding: 0,        // SIN PADDING
           scale: 2
         }
       });
@@ -303,20 +303,8 @@ export default function AppTldrawWorking() {
         <h1 className="text-xl font-bold">🍌 Nano Banana Canvas</h1>
         
         <div className="flex items-center space-x-2">
-          {/* Status Message */}
-          {status && (
-            <div className="flex items-center space-x-2 px-3 py-1 bg-blue-100 text-blue-700 rounded-lg animate-pulse">
-              {isGenerating ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <CheckCircle className="h-4 w-4" />
-              )}
-              <span className="text-sm">{status}</span>
-            </div>
-          )}
-          
-          {/* Error Message */}
-          {error && (
+          {/* Error Message Only */}
+          {error && !isGenerating && (
             <div className="flex items-center space-x-2 px-3 py-1 bg-red-100 text-red-700 rounded-lg">
               <AlertCircle className="h-4 w-4" />
               <span className="text-sm">{error}</span>
@@ -340,17 +328,6 @@ export default function AppTldrawWorking() {
         {/* Canvas */}
         <div className="flex-1 relative bg-gray-100">
           <Tldraw onMount={handleMount} />
-          
-          {/* Loading Overlay */}
-          {isGenerating && (
-            <div className="absolute inset-0 bg-black bg-opacity-30 flex items-center justify-center z-50">
-              <div className="bg-white rounded-lg p-6 flex flex-col items-center space-y-4">
-                <Loader2 className="h-12 w-12 animate-spin text-blue-600" />
-                <p className="text-lg font-medium">Generating image...</p>
-                <p className="text-sm text-gray-600">{status}</p>
-              </div>
-            </div>
-          )}
         </div>
         
         {/* Sidebar */}
@@ -360,20 +337,31 @@ export default function AppTldrawWorking() {
           <Button
             onClick={generateFromCanvas}
             disabled={isGenerating}
-            className="w-full h-14 bg-blue-600 text-white hover:bg-blue-700 font-medium text-lg"
+            className={`w-full h-14 font-medium text-lg transition-all ${
+              isGenerating 
+                ? 'bg-gradient-to-r from-blue-500 to-purple-500 animate-pulse text-white' 
+                : 'bg-blue-600 text-white hover:bg-blue-700'
+            }`}
           >
             {isGenerating ? (
-              <>
-                <Loader2 className="w-5 h-5 mr-2 animate-spin" />
-                Generating...
-              </>
+              <div className="flex items-center justify-center">
+                <Loader2 className="w-6 h-6 mr-3 animate-spin" />
+                <span className="animate-pulse">Generating Image...</span>
+              </div>
             ) : (
-              <>
+              <div className="flex items-center justify-center">
                 <Wand2 className="w-5 h-5 mr-2" />
-                Generate Image
-              </>
+                <span>Generate Image</span>
+              </div>
             )}
           </Button>
+          
+          {/* Status Message Below Button */}
+          {isGenerating && status && (
+            <div className="text-center text-sm text-gray-600 animate-pulse">
+              {status}
+            </div>
+          )}
 
           {/* Styles */}
           <div>
@@ -392,7 +380,7 @@ export default function AppTldrawWorking() {
                   onClick={() => toggleStyle(style.id)}
                   className={`py-2 px-3 text-sm rounded-lg border transition-all ${
                     selectedStyles.includes(style.id)
-                      ? 'border-violet-600 bg-violet-600 text-white hover:bg-violet-700'
+                      ? 'border-blue-600 bg-blue-600 text-white hover:bg-blue-700'
                       : 'border-blue-500 bg-blue-50 text-blue-700 hover:bg-blue-100'
                   }`}
                 >
