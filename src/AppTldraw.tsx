@@ -166,37 +166,34 @@ export default function AppTldraw() {
     setIsGenerating(true);
 
     try {
-      console.log('🚀 GENERANDO IMAGEN - MODO SIMPLIFICADO');
+      console.log('🚀 GENERANDO IMAGEN - USANDO SELECCIÓN');
       
-      // SIMPLIFICADO: Exportar TODO el canvas sin verificaciones complejas
-      const allShapes = Array.from(editor.getCurrentPageShapeIds());
-      console.log(`📊 Exportando ${allShapes.length} shapes del canvas`);
+      // IMPORTANTE: Usar SOLO los shapes SELECCIONADOS
+      const selectedShapes = editor.getSelectedShapes();
+      let shapesToExport: string[] = [];
       
-      // Si no hay shapes, crear un shape temporal para forzar la exportación
-      if (allShapes.length === 0) {
-        console.log('⚠️ Canvas vacío - creando shape temporal');
-        
-        // Crear un pequeño punto invisible para forzar la exportación
-        const tempId = createShapeId();
-        editor.createShape({
-          id: tempId,
-          type: 'geo',
-          x: 400,
-          y: 300,
-          props: {
-            w: 10,
-            h: 10,
-            geo: 'rectangle',
-            color: 'black',
-            fill: 'none'
-          }
-        });
-        
-        allShapes.push(tempId.toString());
+      if (selectedShapes.length > 0) {
+        // Si hay shapes seleccionados, usar SOLO esos
+        console.log(`✅ Usando ${selectedShapes.length} shapes SELECCIONADOS`);
+        shapesToExport = selectedShapes.map(shape => shape.id);
+      } else {
+        // Si no hay selección, usar TODO el canvas
+        console.log('⚠️ No hay selección - usando todo el canvas');
+        shapesToExport = Array.from(editor.getCurrentPageShapeIds());
       }
       
-      // ULTRA SIMPLIFICADO: Exportar TODO sin condiciones
-      const shapeIds: string[] = allShapes;
+      console.log(`📊 Exportando ${shapesToExport.length} shapes`);
+      
+      // Si no hay shapes, mostrar error
+      if (shapesToExport.length === 0) {
+        console.log('❌ Canvas vacío');
+        alert('No hay nada para generar. Por favor dibuja algo o selecciona elementos del canvas.');
+        setIsGenerating(false);
+        return;
+      }
+      
+      // Exportar los shapes seleccionados o todo el canvas
+      const shapeIds: string[] = shapesToExport;
       console.log(`✅ Exportando ${shapeIds.length} shapes sin filtros ni condiciones`);
 
       // Export canvas as image - FIXED VERSION
@@ -275,33 +272,10 @@ export default function AppTldraw() {
         
         console.log('✅ Canvas exportado exitosamente');
       } catch (exportError) {
-        console.error('Error exportando canvas:', exportError);
-        
-        // Método alternativo: crear un canvas simple
-        console.log('🔄 Intentando método alternativo...');
-        const canvas = document.createElement('canvas');
-        const ctx = canvas.getContext('2d');
-        canvas.width = 800;
-        canvas.height = 600;
-        
-        // Fondo blanco
-        if (ctx) {
-          ctx.fillStyle = 'white';
-          ctx.fillRect(0, 0, 800, 600);
-          
-          // Texto de prueba
-          ctx.fillStyle = 'black';
-          ctx.font = '30px Arial';
-          ctx.fillText('Canvas Content', 300, 300);
-        }
-        
-        blob = await new Promise((resolve) => {
-          canvas.toBlob(
-            (b) => resolve(b!),
-            'image/png',
-            1.0
-          );
-        });
+        console.error('❌ Error exportando canvas:', exportError);
+        alert('Error al exportar el canvas. Por favor intenta de nuevo o refresca la página.');
+        setIsGenerating(false);
+        return;
       }
 
       console.log('📏 Tamaño del blob:', blob.size, 'bytes');
@@ -756,14 +730,9 @@ export default function AppTldraw() {
             } else {
               // Normal generation mode
               console.log('🚀 MODO GENERACIÓN: Nueva imagen desde cero');
-              console.log('📝 Sin imagen seleccionada o previa');
+              console.log('📝 Generando desde dibujos/selección');
               
-              const sanitizedPrompt = sanitizePrompt(prompt || ('Transform this sketch into a detailed, high quality image. ' +
-                  'CRITICAL: Preserve the EXACT spatial positioning of ALL elements. ' +
-                  'Elements drawn at the BOTTOM must appear at the BOTTOM. ' +
-                  'Elements drawn at the TOP must appear at the TOP. ' +
-                  'Elements on the LEFT stay on the LEFT, elements on the RIGHT stay on the RIGHT. ' +
-                  'Maintain the exact layout and positioning as drawn in the sketch.'));
+              const sanitizedPrompt = sanitizePrompt(prompt || 'Transform this drawing/sketch into a photorealistic, detailed image. Interpret the shapes and lines as real objects.');
               
               response = await generateWithGeminiReal(
                 base64,
@@ -1520,13 +1489,17 @@ export default function AppTldraw() {
         </div>
         
         <div className="flex-1 p-6 space-y-6 overflow-y-auto">
-          {/* Mode Indicator - Shows current selection */}
-          {editorRef.current && editorRef.current.getSelectedShapes().find(s => s.type === 'image') && (
-            <div className="bg-gray-100 rounded-lg p-3">
+          {/* Selection Indicator - Shows what will be generated */}
+          {editorRef.current && editorRef.current.getSelectedShapes().length > 0 && (
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
               <div className="flex items-center justify-between">
                 <div>
-                  <div className="text-sm font-medium text-gray-900">Edit Mode</div>
-                  <div className="text-xs text-gray-500 mt-1">Image selected - Draw to edit</div>
+                  <div className="text-sm font-medium text-blue-900">
+                    {editorRef.current.getSelectedShapes().length} elementos seleccionados
+                  </div>
+                  <div className="text-xs text-blue-600 mt-1">
+                    Se generará solo desde la selección actual
+                  </div>
                 </div>
                 <button 
                   onClick={() => {
@@ -1534,9 +1507,9 @@ export default function AppTldraw() {
                       editorRef.current.setSelectedShapes([]);
                     }
                   }}
-                  className="text-xs text-gray-500 hover:text-gray-700"
+                  className="text-xs text-blue-600 hover:text-blue-800"
                 >
-                  Deselect
+                  Deseleccionar
                 </button>
               </div>
             </div>
@@ -1602,7 +1575,9 @@ export default function AppTldraw() {
                       Generating...
                     </>
                   ) : (
-                    editorRef.current && editorRef.current.getSelectedShapes().find(s => s.type === 'image') ? 'Edit Selected Image' : 'Generate'
+                    editorRef.current && editorRef.current.getSelectedShapes().length > 0 
+                      ? `Generate from ${editorRef.current.getSelectedShapes().length} selected`
+                      : 'Generate from All'
                   )}
                 </Button>
                 
@@ -1634,35 +1609,36 @@ export default function AppTldraw() {
                     }
                     
                     const currentSelection = editorRef.current.getSelectedShapes();
-                    const selectedImage = currentSelection.find(s => s.type === 'image');
                     
-                    if (selectedImage) {
-                      console.log('✅ Imagen en selección actual:', selectedImage);
-                      console.log('📊 ID:', selectedImage.id);
+                    if (currentSelection.length > 0) {
+                      const types = currentSelection.map(s => s.type);
+                      const uniqueTypes = [...new Set(types)];
+                      
+                      console.log('✅ Shapes seleccionados:', currentSelection);
+                      console.log('📊 Tipos:', uniqueTypes);
                       
                       alert(
-                        '✅ IMAGEN SELECCIONADA ACTUALMENTE\n\n' +
-                        'Al generar se enviará a Gemini:\n' +
-                        '1️⃣ Esta imagen SIN dibujos\n' +
-                        '2️⃣ Esta imagen CON dibujos encima como referencia\n\n' +
-                        'Gemini comparará ambas y aplicará SOLO los cambios de los dibujos.\n' +
-                        'El fondo permanecerá intacto.\n\n' +
-                        '📝 Imagen seleccionada ID: ' + selectedImage.id
+                        `✅ ${currentSelection.length} ELEMENTOS SELECCIONADOS\n\n` +
+                        `Tipos: ${uniqueTypes.join(', ')}\n\n` +
+                        `Al presionar "Generate":\n` +
+                        `• Se exportará SOLO la selección actual\n` +
+                        `• Gemini convertirá estos elementos en una imagen realista\n\n` +
+                        `💡 TIP: Usa la herramienta de selección para elegir exactamente qué quieres generar`
                       );
                     } else {
-                      console.log('⚠️ No hay imagen en la selección actual');
+                      console.log('⚠️ No hay selección');
                       
-                      const images = editorRef.current.getCurrentPageShapes().filter(s => s.type === 'image');
-                      console.log('📸 Imágenes en el canvas:', images.length);
+                      const allShapes = editorRef.current.getCurrentPageShapes();
+                      console.log('📊 Total shapes en canvas:', allShapes.length);
                       
                       alert(
-                        '⚠️ NO HAY IMAGEN SELECCIONADA\n\n' +
-                        'Para usar el modo de edición con dos imágenes:\n' +
-                        '1. SELECCIONA una imagen en el canvas (click sobre ella)\n' +
-                        '2. Dibuja sobre ella\n' +
+                        '⚠️ NO HAY SELECCIÓN\n\n' +
+                        'Al presionar "Generate" se usará TODO el canvas\n\n' +
+                        '💡 Para generar solo parte del canvas:\n' +
+                        '1. Usa la herramienta de SELECCIÓN\n' +
+                        '2. Selecciona los elementos que quieres\n' +
                         '3. Presiona "Generate"\n\n' +
-                        'Imágenes disponibles en el canvas: ' + images.length +
-                        '\nShapes seleccionados actualmente: ' + currentSelection.length
+                        'Total de elementos en canvas: ' + allShapes.length
                       );
                     }
                   }}
@@ -1672,11 +1648,6 @@ export default function AppTldraw() {
                   🔍 Ver Selección Actual
                 </Button>
               </>
-            )}
-            {editorRef.current && editorRef.current.getSelectedShapes().find(s => s.type === 'image') && (
-              <p className="text-xs text-gray-500 mt-2 text-center">
-                Draw on the selected image to add elements
-              </p>
             )}
             {selectedShapesForMerge.length === 2 && (
               <div className="mt-2">
