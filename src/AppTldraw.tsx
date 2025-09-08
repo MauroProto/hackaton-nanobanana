@@ -170,35 +170,43 @@ export default function AppTldraw() {
       
       // IMPORTANTE: Usar SOLO los shapes SELECCIONADOS
       const selectedShapes = editor.getSelectedShapes();
-      let shapesToExport: string[] = [];
+      let validShapeIds: any[] = [];
+      let needsConversion = false;
       
       if (selectedShapes.length > 0) {
         // Si hay shapes seleccionados, usar SOLO esos
         console.log(`✅ Usando ${selectedShapes.length} shapes SELECCIONADOS`);
-        shapesToExport = selectedShapes.map(shape => shape.id);
+        console.log('📊 Shapes seleccionados:', selectedShapes);
+        // Los IDs ya son TLShapeId válidos, no necesitan conversión
+        validShapeIds = selectedShapes.map(shape => shape.id);
+        needsConversion = false;
       } else {
         // Si no hay selección, usar TODO el canvas
         console.log('⚠️ No hay selección - usando todo el canvas');
-        shapesToExport = Array.from(editor.getCurrentPageShapeIds());
+        const allShapeIds = Array.from(editor.getCurrentPageShapeIds());
+        console.log(`📊 Total shapes en canvas: ${allShapeIds.length}`);
+        
+        if (allShapeIds.length === 0) {
+          console.log('❌ Canvas vacío');
+          alert('No hay nada para generar. Por favor dibuja algo o selecciona elementos del canvas.');
+          setIsGenerating(false);
+          return;
+        }
+        
+        // Estos IDs necesitan conversión a TLShapeId
+        validShapeIds = allShapeIds.map(id => {
+          try {
+            return createShapeId(id);
+          } catch (e) {
+            console.error('Error creando shape ID:', id, e);
+            return null;
+          }
+        }).filter(id => id !== null);
+        needsConversion = false; // Ya los convertimos
       }
       
-      console.log(`📊 Exportando ${shapesToExport.length} shapes`);
-      
-      // Si no hay shapes, mostrar error
-      if (shapesToExport.length === 0) {
-        console.log('❌ Canvas vacío');
-        alert('No hay nada para generar. Por favor dibuja algo o selecciona elementos del canvas.');
-        setIsGenerating(false);
-        return;
-      }
-      
-      // Exportar los shapes seleccionados o todo el canvas
-      const shapeIds: string[] = shapesToExport;
-      console.log(`✅ Exportando ${shapeIds.length} shapes sin filtros ni condiciones`);
-
-      // Export canvas as image - FIXED VERSION
-      console.log('📸 Exportando canvas...');
-      console.log('🎨 Shapes a exportar:', shapeIds);
+      console.log(`✅ Exportando ${validShapeIds.length} shapes válidos`);
+      console.log('🎨 Shape IDs a exportar:', validShapeIds);
       
       // Verificar que el editor esté disponible
       if (!editor) {
@@ -208,21 +216,7 @@ export default function AppTldraw() {
         return;
       }
       
-      // Crear IDs válidos de shapes
-      const validShapeIds = shapeIds
-        .filter(id => id && id !== undefined)
-        .map(id => {
-          try {
-            return createShapeId(id);
-          } catch (e) {
-            console.error('Error creando shape ID:', id, e);
-            return null;
-          }
-        })
-        .filter(id => id !== null);
-      
-      console.log('✅ Shape IDs válidos:', validShapeIds.length);
-      
+      // Verificar que tenemos shapes válidos
       if (validShapeIds.length === 0) {
         console.error('❌ No hay shapes válidos para exportar');
         alert('No hay contenido válido para exportar. Dibuja algo primero.');
