@@ -176,6 +176,99 @@ export async function generateWithGeminiReal(
   }
 }
 
+// Función para aplicar cambios comparando dos imágenes
+export async function applyChangesFromReference(
+  originalImage: string,      // Imagen original SIN dibujos
+  imageWithSketches: string,   // Imagen CON dibujos encima
+  instruction: string
+): Promise<{ generatedImages: string[], error?: string }> {
+  geminiLogger.log('🎨 === APLICANDO CAMBIOS BASADOS EN REFERENCIA ===');
+  
+  try {
+    const ai = initializeGemini();
+    const model = ai.getGenerativeModel({ 
+      model: IMAGE_MODEL,
+      generationConfig: {
+        temperature: 0.2,  // Muy baja para máxima fidelidad
+        topK: 10,
+        topP: 0.8,
+        maxOutputTokens: 8192,
+      }
+    });
+    
+    // Prompt que explica exactamente qué hacer
+    const prompt = `You are receiving TWO images:
+    
+    IMAGE 1 (FIRST): The ORIGINAL photograph without any modifications
+    IMAGE 2 (SECOND): The SAME photograph but with hand-drawn sketches/annotations added on top
+    
+    YOUR TASK:
+    ${instruction}
+    
+    CRITICAL INSTRUCTIONS:
+    1. Compare both images to identify what was drawn/added in the second image
+    2. These drawings/sketches indicate what elements should be added to the original
+    3. Take the FIRST image (original) and ADD ONLY the elements indicated by the sketches in the second image
+    4. Convert the sketches into photorealistic elements that match the original photo's style
+    5. DO NOT modify ANY part of the original photograph except for adding the new elements
+    6. The new elements MUST appear in the EXACT positions where they were drawn
+    7. Match the lighting, shadows, and perspective of the original image
+    8. The background and all existing elements MUST remain UNCHANGED
+    
+    Think of this as: "Look at what was drawn in image 2, and add those elements photorealistically to image 1"
+    
+    IMPORTANT: Return the original image with ONLY the new elements added where the sketches indicated.`;
+    
+    geminiLogger.log('📝 Enviando imagen original + imagen con sketches...');
+    
+    const result = await model.generateContent([
+      prompt,
+      {
+        inlineData: {
+          data: originalImage,
+          mimeType: 'image/png'
+        }
+      },
+      {
+        inlineData: {
+          data: imageWithSketches,
+          mimeType: 'image/png'
+        }
+      }
+    ]);
+    
+    const response = await result.response;
+    
+    if (response.candidates && response.candidates[0]) {
+      const candidate = response.candidates[0];
+      
+      if (candidate.content && candidate.content.parts) {
+        for (const part of candidate.content.parts) {
+          if (part.inlineData && part.inlineData.data) {
+            geminiLogger.log('✅ Imagen procesada con cambios aplicados');
+            return {
+              generatedImages: [part.inlineData.data],
+              error: undefined
+            };
+          }
+        }
+      }
+    }
+    
+    return {
+      generatedImages: [],
+      error: 'No se pudieron aplicar los cambios'
+    };
+    
+  } catch (error) {
+    geminiLogger.error('❌ Error aplicando cambios:', error);
+    return {
+      generatedImages: [],
+      error: error instanceof Error ? error.message : 'Error desconocido'
+    };
+  }
+}
+
 // Función alternativa para edición local (imagen + máscara + instrucción)
 export async function editWithGeminiReal(
   baseImage: string,
@@ -187,14 +280,26 @@ export async function editWithGeminiReal(
   try {
     const ai = initializeGemini();
     const model = ai.getGenerativeModel({ 
-      model: IMAGE_MODEL
+      model: IMAGE_MODEL,
+      generationConfig: {
+        temperature: 0.4,
+        topK: 32,
+        topP: 1,
+        maxOutputTokens: 8192,
+      }
     });
     
-    // Prompt para edición local
-    const prompt = `Edit this image following these instructions: ${instruction}
-    The mask indicates the area to modify (white = edit, black = preserve).
-    Maintain the style, lighting, and perspective of the original image.
-    Only modify the masked area.`;
+    // Prompt ULTRA específico para preservar el fondo
+    const prompt = `CRITICAL: DO NOT regenerate or modify the background/base image AT ALL.
+    
+    Instructions: ${instruction}
+    
+    RULES:
+    1. ONLY add/modify the sketched/drawn elements
+    2. The rest of the image MUST remain EXACTLY the same - pixel perfect
+    3. Do NOT change colors, lighting, or any existing elements
+    4. ONLY interpret and add the hand-drawn sketches as new elements
+    5. Keep everything else UNTOUCHED`;
     
     geminiLogger.log('📝 Instrucción de edición:', instruction);
     

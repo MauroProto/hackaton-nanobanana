@@ -48,6 +48,7 @@ export default function AppTldraw() {
   const [selectedStyles, setSelectedStyles] = useState<string[]>([]);
   const [lastGeneratedImage, setLastGeneratedImage] = useState<string | null>(null);
   const [lastGeneratedImageId, setLastGeneratedImageId] = useState<string | null>(null);
+  // DEPRECATED: Now using real-time selection instead of cached state
   const [selectedImageForEdit, setSelectedImageForEdit] = useState<{id: string, url: string} | null>(null);
   const [selectedShapesForMerge, setSelectedShapesForMerge] = useState<string[]>([]);
   const editorRef = useRef<Editor | null>(null);
@@ -67,15 +68,7 @@ export default function AppTldraw() {
     
     // Listen for shape deletions to clear edit state
     editor.sideEffects.registerAfterDeleteHandler('shape', (shape) => {
-      // Use refs to get current values to avoid stale closures
-      setLastGeneratedImageId(prev => {
-        if (shape.id === prev) {
-          console.log('🗑️ Imagen editada eliminada, limpiando estado');
-          setLastGeneratedImage(null);
-          return null;
-        }
-        return prev;
-      });
+      // Clean up deprecated state if shape is deleted
       setSelectedImageForEdit(prev => {
         if (shape.id === prev?.id) {
           console.log('🗑️ Imagen seleccionada eliminada');
@@ -383,36 +376,113 @@ export default function AppTldraw() {
           let response: any;
           
           try {
-            // Check if we have a selected image for editing
-            if (selectedImageForEdit) {
-              console.log('🎨 MODO EDICIÓN - Imagen seleccionada');
-              console.log('📊 Imagen seleccionada ID:', selectedImageForEdit.id);
-              console.log('✏️ Aplicando ediciones a la imagen seleccionada');
+            // Check CURRENT selection at generation time
+            const currentSelection = editor.getSelectedShapes();
+            console.log('🔍 Selección ACTUAL al generar:', currentSelection.length, 'shapes');
+            
+            // Find if there's an image in current selection
+            const selectedImage = currentSelection.find(shape => shape.type === 'image') as TLImageShape | undefined;
+            
+            if (selectedImage) {
+              console.log('🎨 MODO EDICIÓN MEJORADO - Imagen EN SELECCIÓN ACTUAL');
+              console.log('📊 Imagen seleccionada ID:', selectedImage.id);
+              console.log('✏️ Detectando dibujos sobre la imagen...');
               
-              // Import the edit function
-              const { editWithBaseAndOverlay } = await import('./lib/gemini-real-generator');
+              // PASO 1: Usar la imagen ACTUALMENTE seleccionada
+              const imageShape = selectedImage;
+              if (!imageShape) {
+                console.error('❌ No hay imagen en la selección actual');
+                alert('Por favor selecciona una imagen para editar.');
+                setIsGenerating(false);
+                return;
+              }
               
-              // Extract and validate base64 from the selected image URL
-              let baseImageBase64: string;
+              // PASO 2: Obtener los bounds de la imagen
+              const imageBounds = editor.getShapePageBounds(imageShape);
+              if (!imageBounds) {
+                console.error('❌ No se pudieron obtener bounds de la imagen');
+                setIsGenerating(false);
+                return;
+              }
               
-              console.log('🔍 Tipo de URL de imagen seleccionada:', {
-                url: selectedImageForEdit.url.substring(0, 50),
-                startsWithData: selectedImageForEdit.url.startsWith('data:'),
-                startsWithBlob: selectedImageForEdit.url.startsWith('blob:'),
-                startsWithAsset: selectedImageForEdit.url.startsWith('asset:'),
-                startsWithHttp: selectedImageForEdit.url.startsWith('http')
+              console.log('📐 Bounds de imagen:', {
+                x: imageBounds.x,
+                y: imageBounds.y,
+                width: imageBounds.width,
+                height: imageBounds.height
               });
               
-              if (selectedImageForEdit.url.startsWith('data:')) {
-                baseImageBase64 = selectedImageForEdit.url.split(',')[1];
+              // PASO 3: Encontrar SOLO los dibujos que están SOBRE la imagen
+              const allShapes = Array.from(editor.getCurrentPageShapeIds());
+              const drawingsOverImage = [];
+              
+              for (const shapeId of allShapes) {
+                const shape = editor.getShape(createShapeId(shapeId));
+                if (!shape || shape.id === imageShape.id) continue;
+                
+                // Solo considerar shapes de dibujo (no otras imágenes)
+                if (shape.type === 'draw' || shape.type === 'line' || shape.type === 'arrow' || 
+                    shape.type === 'text' || shape.type === 'geo' || shape.type === 'highlight') {
+                  
+                  const shapeBounds = editor.getShapePageBounds(shape);
+                  if (!shapeBounds) continue;
+                  
+                  // Verificar si el dibujo está sobre la imagen (intersección)
+                  const intersects = !(
+                    shapeBounds.x > imageBounds.x + imageBounds.width ||
+                    shapeBounds.x + shapeBounds.width < imageBounds.x ||
+                    shapeBounds.y > imageBounds.y + imageBounds.height ||
+                    shapeBounds.y + shapeBounds.height < imageBounds.y
+                  );
+                  
+                  if (intersects) {
+                    drawingsOverImage.push(shape.id);
+                    console.log(`  ✅ Dibujo ${shape.type} encontrado sobre la imagen`);
+                  }
+                }
+              }
+              
+              console.log(`🎨 Total de dibujos sobre la imagen: ${drawingsOverImage.length}`);
+              
+              if (drawingsOverImage.length === 0) {
+                alert('No hay dibujos sobre la imagen seleccionada.\n\nDibuja algo sobre la imagen para editarla.');
+                setIsGenerating(false);
+                return;
+              }
+              
+              
+              // Extract and validate base64 from the selected image
+              let baseImageBase64: string;
+              let imageUrl: string = '';
+              
+              // Get the asset URL from the image shape
+              if (imageShape.props.assetId) {
+                const asset = editor.getAsset(imageShape.props.assetId as TLAssetId);
+                if (asset && asset.type === 'image' && asset.props.src) {
+                  imageUrl = asset.props.src;
+                } else {
+                  imageUrl = 'asset:' + imageShape.props.assetId;
+                }
+              }
+              
+              console.log('🔍 Tipo de URL de imagen seleccionada:', {
+                url: imageUrl.substring(0, 50),
+                startsWithData: imageUrl.startsWith('data:'),
+                startsWithBlob: imageUrl.startsWith('blob:'),
+                startsWithAsset: imageUrl.startsWith('asset:'),
+                startsWithHttp: imageUrl.startsWith('http')
+              });
+              
+              if (imageUrl.startsWith('data:')) {
+                baseImageBase64 = imageUrl.split(',')[1];
                 console.log('✅ Imagen ya es base64, longitud:', baseImageBase64.length);
-              } else if (selectedImageForEdit.url.startsWith('asset:')) {
+              } else if (imageUrl.startsWith('asset:')) {
                 // Handle TLDraw asset URLs  
                 console.log('🎨 Manejando asset de TLDraw...');
-                console.log('📊 ID de imagen seleccionada:', selectedImageForEdit.id);
+                console.log('📊 ID de imagen seleccionada:', imageShape.id);
                 
-                // Get the shape by ID instead of relying on selection
-                const shape = editor.getShape(createShapeId(selectedImageForEdit.id)) as TLImageShape;
+                // Use the already obtained imageShape
+                const shape = imageShape;
                 
                 if (!shape || shape.type !== 'image') {
                   console.error('❌ Shape no encontrado o no es imagen:', shape);
@@ -502,7 +572,7 @@ export default function AppTldraw() {
               } else {
                 // If it's a blob URL or external URL, fetch and convert
                 console.log('🔄 Convirtiendo URL a base64...');
-                const response = await fetch(selectedImageForEdit.url);
+                const response = await fetch(imageUrl);
                 const blob = await response.blob();
                 console.log('📦 Blob obtenido:', {
                   size: blob.size,
@@ -574,54 +644,114 @@ export default function AppTldraw() {
                 preview: baseImageBase64.substring(0, 50)
               });
               
-              // Crear prompt específico para edición
-              const editPrompt = sanitizePrompt(prompt || (
-                'SPATIAL ACCURACY IS CRITICAL: The drawn elements MUST appear EXACTLY where they are positioned in the overlay. ' +
-                'If I draw 2 people at the BOTTOM of the image, add them at the BOTTOM. ' +
-                'If I draw objects on the LEFT side, add them on the LEFT side. ' +
-                'If I draw something at the TOP, it must appear at the TOP. ' +
-                'Maintain the EXACT spatial positioning - do NOT move elements to different locations. ' +
-                'Convert the drawn strokes to realistic elements but PRESERVE their EXACT POSITION in the image. ' +
-                'The position WHERE I draw is AS IMPORTANT as WHAT I draw.'));
+              // PASO 4: Crear imagen CON los dibujos visibles
+              console.log('🖼️ Creando imagen con dibujos para comparación...');
               
-              console.log('📝 Prompt de edición:', editPrompt);
+              const withSketchesCanvas = document.createElement('canvas');
+              const withSketchesCtx = withSketchesCanvas.getContext('2d');
               
-              response = await editWithBaseAndOverlay(
-                baseImageBase64,    // Selected image as base
-                base64,             // Current canvas with edits
-                editPrompt,
-                selectedStyles
+              withSketchesCanvas.width = imageBounds.width;
+              withSketchesCanvas.height = imageBounds.height;
+              
+              if (withSketchesCtx) {
+                // Dibujar imagen base primero
+                const baseImg = new Image();
+                await new Promise((resolve, reject) => {
+                  baseImg.onload = resolve;
+                  baseImg.onerror = reject;
+                  baseImg.src = `data:image/png;base64,${baseImageBase64}`;
+                });
+                
+                withSketchesCtx.drawImage(baseImg, 0, 0, withSketchesCanvas.width, withSketchesCanvas.height);
+                
+                // Ahora dibujar los sketches ENCIMA
+                console.log('✏️ Agregando dibujos encima de la imagen...');
+                for (const drawingId of drawingsOverImage) {
+                  const drawingShape = editor.getShape(drawingId);
+                  if (!drawingShape) continue;
+                  
+                  const drawingBounds = editor.getShapePageBounds(drawingShape);
+                  if (!drawingBounds) continue;
+                  
+                  const drawingSvg = await editor.getSvgString([drawingId], {
+                    scale: 1,
+                    background: false,
+                    padding: 0,
+                    darkMode: false
+                  });
+                  
+                  if (!drawingSvg) continue;
+                  
+                  const drawingImg = new Image();
+                  await new Promise((resolve, reject) => {
+                    drawingImg.onload = resolve;
+                    drawingImg.onerror = reject;
+                    const svgBlob = new Blob([drawingSvg.svg], { type: 'image/svg+xml' });
+                    drawingImg.src = URL.createObjectURL(svgBlob);
+                  });
+                  
+                  const relativeX = drawingBounds.x - imageBounds.x;
+                  const relativeY = drawingBounds.y - imageBounds.y;
+                  
+                  withSketchesCtx.drawImage(
+                    drawingImg,
+                    relativeX,
+                    relativeY,
+                    drawingBounds.width,
+                    drawingBounds.height
+                  );
+                  
+                  console.log(`  📍 Dibujo agregado en: x=${relativeX}, y=${relativeY}`);
+                }
+              }
+              
+              // Convertir imagen con sketches a base64
+              const withSketchesBlob = await new Promise<Blob>((resolve) => {
+                withSketchesCanvas.toBlob(
+                  (b) => resolve(b!),
+                  'image/png',
+                  1.0
+                );
+              });
+              
+              const withSketchesReader = new FileReader();
+              const withSketchesBase64 = await new Promise<string>((resolve, reject) => {
+                withSketchesReader.onloadend = () => {
+                  const result = withSketchesReader.result?.toString().split(',')[1];
+                  if (result) {
+                    resolve(result);
+                  } else {
+                    reject(new Error('No se pudo convertir imagen con sketches a base64'));
+                  }
+                };
+                withSketchesReader.onerror = reject;
+                withSketchesReader.readAsDataURL(withSketchesBlob);
+              });
+              
+              console.log('✅ Imagen con sketches creada');
+              
+              // Crear prompt específico
+              const editPrompt = sanitizePrompt(
+                prompt || 'Identify the hand-drawn sketches and convert them into photorealistic elements'
+              );
+              
+              console.log('📝 Enviando DOS imágenes a Gemini...');
+              console.log('  1️⃣ Imagen original SIN dibujos');
+              console.log('  2️⃣ Imagen CON dibujos como referencia');
+              
+              // Usar nueva función que compara dos imágenes
+              const { applyChangesFromReference } = await import('./lib/gemini-real-generator');
+              
+              response = await applyChangesFromReference(
+                baseImageBase64,      // IMAGEN 1: Original SIN dibujos
+                withSketchesBase64,   // IMAGEN 2: Con dibujos encima
+                editPrompt
               );
               
               console.log('✅ Edición aplicada a imagen seleccionada');
               
               // DON'T store the base image - the new edited image will be stored later
               // when we process the response
-              
-            } else if (lastGeneratedImage && lastGeneratedImageId) {
-              // Fallback to last generated image if no selection
-              console.log('🎨 MODO EDICIÓN - Última imagen generada');
-              console.log('📊 Imagen base ID:', lastGeneratedImageId);
-              
-              const { editWithBaseAndOverlay } = await import('./lib/gemini-real-generator');
-              
-              const editPrompt = sanitizePrompt(prompt || (
-                'SPATIAL ACCURACY IS CRITICAL: The drawn elements MUST appear EXACTLY where they are positioned in the overlay. ' +
-                'If I draw 2 people at the BOTTOM of the image, add them at the BOTTOM. ' +
-                'If I draw objects on the LEFT side, add them on the LEFT side. ' +
-                'If I draw something at the TOP, it must appear at the TOP. ' +
-                'Maintain the EXACT spatial positioning - do NOT move elements to different locations. ' +
-                'Convert the drawn strokes to realistic elements but PRESERVE their EXACT POSITION in the image. ' +
-                'The position WHERE I draw is AS IMPORTANT as WHAT I draw.'));
-              
-              response = await editWithBaseAndOverlay(
-                lastGeneratedImage,  
-                base64,             
-                editPrompt,
-                selectedStyles
-              );
-              
-              console.log('✅ Edición enviada a Gemini');
               
             } else {
               // Normal generation mode
@@ -733,24 +863,61 @@ export default function AppTldraw() {
             const generatedImage = response.generatedImages[0];
             const imageUrl = `data:image/png;base64,${generatedImage}`;
             
-            console.log('✅ Image generated successfully, adding to canvas...');
+            console.log('✅ Image generated successfully, updating canvas...');
             
-            // Clear the canvas
-            editor.deleteShapes(shapeIds.map(id => createShapeId(id)));
+            // IMPORTANTE: Solo eliminar dibujos, NO la imagen base si estamos editando
+            console.log('🗑️ Eliminando dibujos...');
+            const allCurrentShapes = Array.from(editor.getCurrentPageShapeIds());
+            const shapesToDelete = [];
+            let imageToReplace = null;
             
-            // If we were editing an image, also delete the original image
-            if (selectedImageForEdit) {
-              console.log('🗑️ Removing original edited image:', selectedImageForEdit.id);
-              editor.deleteShape(createShapeId(selectedImageForEdit.id));
-              setSelectedImageForEdit(null);
+            for (const shapeId of allCurrentShapes) {
+              const shape = editor.getShape(createShapeId(shapeId));
+              if (shape) {
+                // Eliminar todos los shapes de dibujo
+                if (shape.type === 'draw' || shape.type === 'line' || shape.type === 'arrow' || 
+                    shape.type === 'text' || shape.type === 'note' || shape.type === 'geo' || 
+                    shape.type === 'highlight' || shape.type === 'frame') {
+                  shapesToDelete.push(createShapeId(shapeId));
+                  console.log(`  - Eliminando dibujo ${shape.type}: ${shapeId}`);
+                }
+                // Si estamos editando, guardar referencia a la imagen para reemplazarla
+                const currentlySelectedImage = editor.getSelectedShapes().find(s => s.type === 'image');
+                if (currentlySelectedImage && shape.id === currentlySelectedImage.id) {
+                  imageToReplace = shape;
+                  console.log(`  📸 Imagen a reemplazar encontrada: ${shapeId}`);
+                }
+              }
             }
             
-            // Add generated image to canvas
-            const imageShapeId = await addGeneratedImageToCanvas(imageUrl);
+            // Eliminar solo los dibujos
+            if (shapesToDelete.length > 0) {
+              editor.deleteShapes(shapesToDelete);
+              console.log(`✅ Eliminados ${shapesToDelete.length} dibujos`);
+            }
             
-            // Save the generated image and its ID for future edits
-            setLastGeneratedImage(generatedImage);
-            setLastGeneratedImageId(imageShapeId);
+            // Si estamos editando una imagen, reemplazarla en lugar de agregar una nueva
+            let imageShapeId;
+            if (imageToReplace) {
+              console.log('🔄 Reemplazando imagen existente...');
+              
+              // Obtener la posición y tamaño de la imagen actual
+              const bounds = editor.getShapePageBounds(imageToReplace);
+              
+              // Eliminar la imagen anterior
+              editor.deleteShape(imageToReplace.id);
+              
+              // Agregar la nueva imagen en la misma posición
+              imageShapeId = await addGeneratedImageToCanvas(imageUrl, bounds);
+              
+              // Limpiar estado de edición
+              setSelectedImageForEdit(null);
+            } else {
+              // Si no estamos editando, agregar normalmente
+              imageShapeId = await addGeneratedImageToCanvas(imageUrl);
+            }
+            
+            // No longer saving last generated image - we use real-time selection
             
             // Add to gallery
             setGeneratedImages(prev => [...prev, imageUrl]);
@@ -873,7 +1040,7 @@ export default function AppTldraw() {
   };
 
   // Add generated image to canvas (replacing content)
-  const addGeneratedImageToCanvas = async (imageUrl: string): Promise<string | null> => {
+  const addGeneratedImageToCanvas = async (imageUrl: string, existingBounds?: any): Promise<string | null> => {
     if (!editorRef.current) return null;
 
     const editor = editorRef.current;
@@ -924,16 +1091,30 @@ export default function AppTldraw() {
         }
       ]);
       
-      // Center in viewport
-      const viewportCenter = editor.getViewportPageBounds().center;
+      // Usar posición existente si se proporciona, sino centrar
+      let x, y;
+      if (existingBounds) {
+        // Mantener la misma posición y tamaño
+        x = existingBounds.x;
+        y = existingBounds.y;
+        width = existingBounds.width;
+        height = existingBounds.height;
+        console.log(`📍 Reemplazando imagen en posición: x=${x}, y=${y}`);
+      } else {
+        // Centrar en viewport
+        const viewportCenter = editor.getViewportPageBounds().center;
+        x = viewportCenter.x - width / 2;
+        y = viewportCenter.y - height / 2;
+        console.log(`📍 Nueva imagen centrada en viewport`);
+      }
       
       // Create image shape with proper dimensions
       const imageId = createShapeId();
       editor.createShape<TLImageShape>({
         id: imageId,
         type: 'image',
-        x: viewportCenter.x - width / 2,
-        y: viewportCenter.y - height / 2,
+        x: x,
+        y: y,
         props: {
           w: width,
           h: height,
@@ -1179,9 +1360,7 @@ export default function AppTldraw() {
     const editor = editorRef.current;
     editor.deleteShapes(Array.from(editor.getCurrentPageShapeIds()));
     setGeneratedImages([]);
-    // Clear all editing states
-    setLastGeneratedImage(null);
-    setLastGeneratedImageId(null);
+    // Clear deprecated editing state
     setSelectedImageForEdit(null);
     console.log('Canvas cleared');
   };
@@ -1341,24 +1520,23 @@ export default function AppTldraw() {
         </div>
         
         <div className="flex-1 p-6 space-y-6 overflow-y-auto">
-          {/* Mode Indicator - Minimal */}
-          {selectedImageForEdit && (
+          {/* Mode Indicator - Shows current selection */}
+          {editorRef.current && editorRef.current.getSelectedShapes().find(s => s.type === 'image') && (
             <div className="bg-gray-100 rounded-lg p-3">
               <div className="flex items-center justify-between">
                 <div>
                   <div className="text-sm font-medium text-gray-900">Edit Mode</div>
-                  <div className="text-xs text-gray-500 mt-1">Editing selected image</div>
+                  <div className="text-xs text-gray-500 mt-1">Image selected - Draw to edit</div>
                 </div>
                 <button 
                   onClick={() => {
-                    setSelectedImageForEdit(null);
                     if (editorRef.current) {
                       editorRef.current.setSelectedShapes([]);
                     }
                   }}
                   className="text-xs text-gray-500 hover:text-gray-700"
                 >
-                  Cancel
+                  Deselect
                 </button>
               </div>
             </div>
@@ -1424,7 +1602,7 @@ export default function AppTldraw() {
                       Generating...
                     </>
                   ) : (
-                    selectedImageForEdit ? 'Edit Image' : 'Generate'
+                    editorRef.current && editorRef.current.getSelectedShapes().find(s => s.type === 'image') ? 'Edit Selected Image' : 'Generate'
                   )}
                 </Button>
                 
@@ -1444,9 +1622,58 @@ export default function AppTldraw() {
                     '🧪 Test API (Prompt Only)'
                   )}
                 </Button>
+                
+                {/* Diagnostic Button for Two-Image Approach */}
+                <Button
+                  onClick={() => {
+                    console.log('🔍 DIAGNÓSTICO: Verificando selección ACTUAL...');
+                    
+                    if (!editorRef.current) {
+                      alert('Editor no está listo todavía. Por favor espera un momento.');
+                      return;
+                    }
+                    
+                    const currentSelection = editorRef.current.getSelectedShapes();
+                    const selectedImage = currentSelection.find(s => s.type === 'image');
+                    
+                    if (selectedImage) {
+                      console.log('✅ Imagen en selección actual:', selectedImage);
+                      console.log('📊 ID:', selectedImage.id);
+                      
+                      alert(
+                        '✅ IMAGEN SELECCIONADA ACTUALMENTE\n\n' +
+                        'Al generar se enviará a Gemini:\n' +
+                        '1️⃣ Esta imagen SIN dibujos\n' +
+                        '2️⃣ Esta imagen CON dibujos encima como referencia\n\n' +
+                        'Gemini comparará ambas y aplicará SOLO los cambios de los dibujos.\n' +
+                        'El fondo permanecerá intacto.\n\n' +
+                        '📝 Imagen seleccionada ID: ' + selectedImage.id
+                      );
+                    } else {
+                      console.log('⚠️ No hay imagen en la selección actual');
+                      
+                      const images = editorRef.current.getCurrentPageShapes().filter(s => s.type === 'image');
+                      console.log('📸 Imágenes en el canvas:', images.length);
+                      
+                      alert(
+                        '⚠️ NO HAY IMAGEN SELECCIONADA\n\n' +
+                        'Para usar el modo de edición con dos imágenes:\n' +
+                        '1. SELECCIONA una imagen en el canvas (click sobre ella)\n' +
+                        '2. Dibuja sobre ella\n' +
+                        '3. Presiona "Generate"\n\n' +
+                        'Imágenes disponibles en el canvas: ' + images.length +
+                        '\nShapes seleccionados actualmente: ' + currentSelection.length
+                      );
+                    }
+                  }}
+                  className="w-full h-10 mt-2 bg-purple-600 text-white hover:bg-purple-700 font-medium rounded-lg"
+                  title="Verificar la selección actual"
+                >
+                  🔍 Ver Selección Actual
+                </Button>
               </>
             )}
-            {selectedImageForEdit && (
+            {editorRef.current && editorRef.current.getSelectedShapes().find(s => s.type === 'image') && (
               <p className="text-xs text-gray-500 mt-2 text-center">
                 Draw on the selected image to add elements
               </p>
