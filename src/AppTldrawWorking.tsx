@@ -300,7 +300,7 @@ export default function AppTldrawWorking() {
     <div className="w-full h-screen flex flex-col bg-gray-50">
       {/* Header */}
       <div className="flex items-center justify-between p-4 bg-white border-b border-gray-200">
-        <h1 className="text-xl font-bold">🍌 Nano Banana - Gemini 2.5 Flash Image Preview</h1>
+        <h1 className="text-xl font-bold">🍌 Nano Banana Lienzo</h1>
         
         <div className="flex items-center space-x-2">
           {/* Status Message */}
@@ -360,7 +360,7 @@ export default function AppTldrawWorking() {
           <Button
             onClick={generateFromCanvas}
             disabled={isGenerating}
-            className="w-full h-14 bg-gradient-to-r from-purple-600 to-blue-600 text-white hover:from-purple-700 hover:to-blue-700 font-medium text-lg"
+            className="w-full h-14 bg-blue-600 text-white hover:bg-blue-700 font-medium text-lg"
           >
             {isGenerating ? (
               <>
@@ -374,13 +374,6 @@ export default function AppTldrawWorking() {
               </>
             )}
           </Button>
-
-          {/* Info */}
-          <div className="bg-gradient-to-r from-yellow-50 to-orange-50 border border-orange-200 rounded-lg p-3">
-            <p className="text-xs text-orange-700">
-              🍌 <strong>Nano Banana:</strong> Usando <code className="bg-orange-100 px-1 rounded">gemini-2.5-flash-image-preview</code> para generar imágenes reales desde tus dibujos
-            </p>
-          </div>
 
           {/* Styles */}
           <div>
@@ -399,8 +392,8 @@ export default function AppTldrawWorking() {
                   onClick={() => toggleStyle(style.id)}
                   className={`py-2 px-3 text-sm rounded-lg border transition-all ${
                     selectedStyles.includes(style.id)
-                      ? 'border-purple-600 bg-purple-600 text-white'
-                      : 'border-gray-200 hover:border-gray-400'
+                      ? 'border-violet-600 bg-violet-600 text-white'
+                      : 'border-blue-500 bg-blue-50 text-blue-700 hover:bg-blue-100'
                   }`}
                 >
                   {style.label}

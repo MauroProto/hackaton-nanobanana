@@ -52,12 +52,17 @@ export async function generateImageWithNanoBanana(
     }
     
     // Agregar instrucciones específicas para mejorar la generación
-    fullPrompt += `. Analyze the sketch carefully and:
-    - Maintain the composition and layout from the original sketch
-    - Add realistic details, textures, and lighting
-    - Use professional photography quality
+    fullPrompt += `. CRITICAL REQUIREMENTS:
+    - Fill the ENTIRE frame edge-to-edge
+    - NO black bars, NO white borders, NO letterboxing, NO pillarboxing
+    - The image must extend to ALL four edges of the canvas
+    - Do NOT add any borders, frames, or empty spaces around the image
+    - Make the content fill 100% of the available space
+    - If the sketch has empty areas, extend the scene to fill them
+    - Maintain the composition from the original sketch
+    - Add realistic details, textures, and professional lighting
     - Make it visually stunning and detailed
-    - Fill the entire frame without borders or letterboxing`;
+    - IMPORTANT: The final image must be perfectly cropped without ANY borders`;
     
     console.log('📝 Prompt:', fullPrompt);
     console.log('📊 Sketch size:', cleanBase64.length);
@@ -173,8 +178,14 @@ export async function editImageWithNanoBanana(
       editPrompt += `. Style: ${styles.join(', ')}`;
     }
     
-    // Agregar instrucciones para preservar el resto
-    editPrompt += `. Important: Preserve everything else in the image except for the specific changes requested. Maintain the original style, lighting, and perspective.`;
+    // Agregar instrucciones para preservar el resto y evitar bordes
+    editPrompt += `. CRITICAL REQUIREMENTS:
+    - Preserve everything else in the image except for the specific changes requested
+    - Maintain the original style, lighting, and perspective
+    - Fill the ENTIRE frame edge-to-edge
+    - NO black bars, NO white borders, NO letterboxing, NO pillarboxing
+    - The edited image must extend to ALL four edges without ANY borders
+    - Keep the image perfectly cropped as the original`;
     
     console.log('📝 Edit prompt:', editPrompt);
     
@@ -249,7 +260,8 @@ export async function composeImagesWithNanoBanana(
     });
     
     // Construir el contenido con texto + múltiples imágenes
-    const contents: any[] = [compositionInstructions];
+    const fullCompositionPrompt = compositionInstructions + ` CRITICAL: Fill the ENTIRE frame edge-to-edge. NO black bars, NO borders, NO letterboxing. The composed image must extend to ALL four edges without ANY empty spaces.`;
+    const contents: any[] = [fullCompositionPrompt];
     
     // Agregar cada imagen
     for (let i = 0; i < images.length; i++) {
